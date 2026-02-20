@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import time
+import logging
 from pathlib import Path
 from uuid import uuid4
 from typing import Any, Dict
@@ -33,7 +34,10 @@ APP_NAME = "qa-mvp-fastapi"
 NODE_API_BASE = os.getenv("QA_NODE_API_BASE", "http://127.0.0.1:4173").rstrip("/")
 WEB_ORIGIN = os.getenv("QA_WEB_ORIGIN", "*").strip() or "*"
 REQUEST_TIMEOUT_SEC = float(os.getenv("QA_API_TIMEOUT_SEC", "180"))
+HEALTH_UPSTREAM_TIMEOUT_SEC = float(os.getenv("QA_HEALTH_UPSTREAM_TIMEOUT_SEC", "2.5"))
 AUTH_STORE_PATH = Path("out/auth-profiles.json")
+
+logger = logging.getLogger(APP_NAME)
 
 app = FastAPI(title=APP_NAME, version="0.1.0")
 
@@ -46,6 +50,27 @@ app.mount("/out", StaticFiles(directory="out"), name="out")
 @app.on_event("startup")
 def _startup() -> None:
     migrate()
+
+
+@app.middleware("http")
+async def _catch_unhandled_errors(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("unhandled error: %s %s", request.method, request.url.path)
+        raise HTTPException(status_code=500, detail={"ok": False, "error": str(e)}) from e
+
+
+async def _json_payload(req: Request) -> Dict[str, Any]:
+    try:
+        data = await req.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"ok": False, "error": "invalid JSON body"}) from e
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"ok": False, "error": "JSON object body required"})
+    return data
 
 allow_origins = ["*"] if WEB_ORIGIN == "*" else [WEB_ORIGIN]
 app.add_middleware(
@@ -183,22 +208,28 @@ async def health() -> Dict[str, Any]:
     upstream_ok = False
     upstream_detail: Any = None
     try:
-        upstream_detail = await proxy_get("/")
-        upstream_ok = True
-    except HTTPException as e:
-        upstream_detail = e.detail
+        async with httpx.AsyncClient(timeout=HEALTH_UPSTREAM_TIMEOUT_SEC) as client:
+            resp = await client.get(f"{NODE_API_BASE}/")
+            upstream_ok = resp.status_code < 500
+            try:
+                upstream_detail = resp.json()
+            except Exception:
+                upstream_detail = {"status": resp.status_code, "text": resp.text[:200]}
+    except Exception as e:
+        upstream_detail = str(e)
 
     return {
-        "ok": upstream_ok,
+        "ok": True,
         "service": APP_NAME,
         "upstream": NODE_API_BASE,
+        "upstreamOk": upstream_ok,
         "upstreamDetail": upstream_detail,
     }
 
 
 @app.post("/api/llm/oauth/start")
 async def llm_oauth_start(req: Request) -> Dict[str, Any]:
-    payload = await req.json() if req.method else {}
+    payload = await _json_payload(req) if req.method else {}
     provider = str((payload or {}).get("provider") or "openai").strip().lower()
     if provider != "openai":
         raise HTTPException(status_code=400, detail={"ok": False, "error": "only openai supported"})
@@ -298,7 +329,7 @@ async def llm_oauth_status(provider: str = "openai") -> Dict[str, Any]:
 
 @app.post("/api/llm/oauth/logout")
 async def llm_oauth_logout(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     provider = str((payload or {}).get("provider") or "openai").strip().lower()
     profiles = _load_auth_profiles()
     profiles.pop(provider, None)
@@ -308,7 +339,7 @@ async def llm_oauth_logout(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/analyze")
 async def analyze(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     base_url = str(payload.get("baseUrl", "")).strip()
     if not base_url:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "baseUrl required"})
@@ -352,7 +383,7 @@ async def analysis_get(analysis_id: str) -> Dict[str, Any]:
 
 @app.post("/api/flow-map")
 async def flow_map(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     analysis_id = str(payload.get("analysisId", "")).strip()
     if not analysis_id:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "analysisId required"})
@@ -368,7 +399,7 @@ async def flow_map(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/structure-map")
 async def structure_map(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     analysis_id = str(payload.get("analysisId", "")).strip()
     if not analysis_id:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "analysisId required"})
@@ -383,7 +414,7 @@ async def structure_map(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/condition-matrix")
 async def condition_matrix(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     screen = str(payload.get("screen", "")).strip()
     if not screen:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "screen required"})
@@ -395,7 +426,7 @@ async def condition_matrix(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/checklist")
 async def checklist(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     screen = str(payload.get("screen", "")).strip()
     if not screen:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "screen required"})
@@ -505,7 +536,7 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.post("/api/checklist/execute")
 async def checklist_execute(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     cfg = _extract_execute_payload(payload)
     out = await _execute_and_finalize(cfg)
     if not out.get("ok"):
@@ -515,7 +546,7 @@ async def checklist_execute(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/checklist/execute/async")
 async def checklist_execute_async(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     cfg = _extract_execute_payload(payload)
     batch_size = max(1, int(payload.get("batchSize", 20) or 20))
     job_id = f"job_{uuid4().hex[:12]}"
@@ -624,7 +655,7 @@ async def qa_templates() -> Dict[str, Any]:
 
 @app.post("/api/flow/transition-check")
 async def flow_transition_check(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     steps = payload.get("steps") or []
     template_key = str(payload.get("templateKey") or "").strip()
     base_url = str(payload.get("baseUrl") or "").strip()
@@ -643,7 +674,7 @@ async def flow_transition_check(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/report/finalize")
 async def report_finalize(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     run_id = str(payload.get("runId", "")).strip() or f"run_{int(time.time()*1000)}"
     project_name = str(payload.get("projectName", "QA 테스트시트")).strip()
     items = payload.get("items") or []
@@ -656,7 +687,7 @@ async def report_finalize(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/checklist/auto")
 async def checklist_auto(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     analysis_id = str(payload.get("analysisId", "")).strip()
     if not analysis_id:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "analysisId required"})
@@ -769,7 +800,7 @@ async def _run_oneclick_single(base_url: str, provider: Any = None, model: str |
 
 @app.post("/api/oneclick")
 async def oneclick(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     provider, model, llm_auth = _resolve_llm(payload)
 
     dual = payload.get("dualContext") if isinstance(payload.get("dualContext"), dict) else {}
@@ -847,7 +878,7 @@ async def oneclick(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/flows/finalize")
 async def flows_finalize(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     analysis_id = str(payload.get("analysisId", "")).strip()
     flows = payload.get("flows") or []
     if not analysis_id:
@@ -866,7 +897,7 @@ async def flows_finalize(req: Request) -> Dict[str, Any]:
 
 @app.post("/api/flows/run")
 async def flows_run(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+    payload = await _json_payload(req)
     analysis_id = str(payload.get("analysisId", "")).strip()
     if not analysis_id:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "analysisId required"})
