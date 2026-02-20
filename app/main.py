@@ -1,10 +1,14 @@
 import asyncio
+import base64
+import hashlib
+import json
 import os
+import secrets
 import time
 from pathlib import Path
 from uuid import uuid4
 from typing import Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -28,6 +32,7 @@ APP_NAME = "qa-mvp-fastapi"
 NODE_API_BASE = os.getenv("QA_NODE_API_BASE", "http://127.0.0.1:4173").rstrip("/")
 WEB_ORIGIN = os.getenv("QA_WEB_ORIGIN", "*").strip() or "*"
 REQUEST_TIMEOUT_SEC = float(os.getenv("QA_API_TIMEOUT_SEC", "180"))
+AUTH_STORE_PATH = Path("out/auth-profiles.json")
 
 app = FastAPI(title=APP_NAME, version="0.1.0")
 
@@ -65,6 +70,11 @@ def _resolve_llm(payload: Dict[str, Any]) -> tuple[Any, Any, Dict[str, Any]]:
     r_auth = routing.get("auth") if isinstance(routing.get("auth"), dict) else {}
     if r_auth:
         llm_auth = {**llm_auth, **r_auth}
+    # merge saved auth profile (OpenClaw-like)
+    saved_openai = _get_profile_auth("openai")
+    if saved_openai:
+        current_openai = llm_auth.get("openai") if isinstance(llm_auth.get("openai"), dict) else {}
+        llm_auth["openai"] = {**saved_openai, **current_openai}
     return provider, model, llm_auth
 
 
@@ -131,6 +141,32 @@ async def proxy_get(path: str) -> Dict[str, Any]:
     except Exception:
         return {"status": resp.status_code, "text": resp.text[:500]}
 
+def _load_auth_profiles() -> Dict[str, Any]:
+    try:
+        if AUTH_STORE_PATH.exists():
+            return json.loads(AUTH_STORE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_auth_profiles(data: Dict[str, Any]) -> None:
+    AUTH_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    AUTH_STORE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _pkce_challenge(verifier: str) -> str:
+    h = hashlib.sha256(verifier.encode()).digest()
+    return base64.urlsafe_b64encode(h).decode().rstrip("=")
+
+
+def _get_profile_auth(provider: str) -> Dict[str, Any]:
+    profiles = _load_auth_profiles()
+    p = profiles.get(provider) if isinstance(profiles.get(provider), dict) else {}
+    return p
+
+
+
 
 @app.get("/")
 def root() -> Dict[str, Any]:
@@ -157,6 +193,116 @@ async def health() -> Dict[str, Any]:
         "upstream": NODE_API_BASE,
         "upstreamDetail": upstream_detail,
     }
+
+
+@app.post("/api/llm/oauth/start")
+async def llm_oauth_start(req: Request) -> Dict[str, Any]:
+    payload = await req.json() if req.method else {}
+    provider = str((payload or {}).get("provider") or "openai").strip().lower()
+    if provider != "openai":
+        raise HTTPException(status_code=400, detail={"ok": False, "error": "only openai supported"})
+
+    client_id = os.getenv("QA_OPENAI_OAUTH_CLIENT_ID", "").strip()
+    redirect_uri = os.getenv("QA_OPENAI_OAUTH_REDIRECT_URI", "").strip()
+    auth_url = os.getenv("QA_OPENAI_OAUTH_AUTH_URL", "https://auth.openai.com/oauth/authorize").strip()
+    scope = os.getenv("QA_OPENAI_OAUTH_SCOPE", "openid profile offline_access").strip()
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=400, detail={"ok": False, "error": "QA_OPENAI_OAUTH_CLIENT_ID/REDIRECT_URI required"})
+
+    state = secrets.token_urlsafe(24)
+    verifier = secrets.token_urlsafe(64)
+    challenge = _pkce_challenge(verifier)
+
+    profiles = _load_auth_profiles()
+    pending = profiles.get("_pending") if isinstance(profiles.get("_pending"), dict) else {}
+    pending[state] = {"provider": provider, "verifier": verifier, "createdAt": int(time.time() * 1000)}
+    profiles["_pending"] = pending
+    _save_auth_profiles(profiles)
+
+    q = urlencode({
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    })
+    return {"ok": True, "provider": provider, "authUrl": f"{auth_url}?{q}", "state": state}
+
+
+@app.get("/api/llm/oauth/callback")
+async def llm_oauth_callback(code: str = "", state: str = "", error: str = "") -> Dict[str, Any]:
+    if error:
+        raise HTTPException(status_code=400, detail={"ok": False, "error": error})
+    if not code or not state:
+        raise HTTPException(status_code=400, detail={"ok": False, "error": "code/state required"})
+
+    profiles = _load_auth_profiles()
+    pending = profiles.get("_pending") if isinstance(profiles.get("_pending"), dict) else {}
+    item = pending.get(state) if isinstance(pending.get(state), dict) else {}
+    verifier = str(item.get("verifier") or "")
+    if not verifier:
+        raise HTTPException(status_code=400, detail={"ok": False, "error": "invalid state"})
+
+    client_id = os.getenv("QA_OPENAI_OAUTH_CLIENT_ID", "").strip()
+    redirect_uri = os.getenv("QA_OPENAI_OAUTH_REDIRECT_URI", "").strip()
+    token_url = os.getenv("QA_OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.com/oauth/token").strip()
+    client_secret = os.getenv("QA_OPENAI_OAUTH_CLIENT_SECRET", "").strip()
+
+    form = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_verifier": verifier,
+    }
+    if client_secret:
+        form["client_secret"] = client_secret
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(token_url, data=form, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        if r.status_code >= 400:
+            raise HTTPException(status_code=400, detail={"ok": False, "error": f"token exchange failed {r.status_code}"})
+        td = r.json()
+        access = str(td.get("access_token") or "")
+        if not access:
+            raise HTTPException(status_code=400, detail={"ok": False, "error": "access_token missing"})
+
+        profiles["openai"] = {
+            "mode": "oauthToken",
+            "oauthToken": access,
+            "refreshToken": str(td.get("refresh_token") or ""),
+            "tokenType": str(td.get("token_type") or "Bearer"),
+            "expiresIn": int(td.get("expires_in") or 0),
+            "updatedAt": int(time.time() * 1000),
+        }
+        pending.pop(state, None)
+        profiles["_pending"] = pending
+        _save_auth_profiles(profiles)
+        return {"ok": True, "provider": "openai", "connected": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"ok": False, "error": str(e)})
+
+
+@app.get("/api/llm/oauth/status")
+async def llm_oauth_status(provider: str = "openai") -> Dict[str, Any]:
+    p = _get_profile_auth(provider)
+    connected = bool((p.get("oauthToken") or p.get("apiKey"))) if isinstance(p, dict) else False
+    return {"ok": True, "provider": provider, "connected": connected, "mode": p.get("mode") if isinstance(p, dict) else None, "updatedAt": p.get("updatedAt") if isinstance(p, dict) else None}
+
+
+@app.post("/api/llm/oauth/logout")
+async def llm_oauth_logout(req: Request) -> Dict[str, Any]:
+    payload = await req.json()
+    provider = str((payload or {}).get("provider") or "openai").strip().lower()
+    profiles = _load_auth_profiles()
+    profiles.pop(provider, None)
+    _save_auth_profiles(profiles)
+    return {"ok": True, "provider": provider, "connected": False}
 
 
 @app.post("/api/analyze")

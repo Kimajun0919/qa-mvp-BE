@@ -53,6 +53,22 @@ Example response:
 
 ---
 
+## OAuth (OpenClaw-style auth profile)
+
+### POST `/api/llm/oauth/start`
+OpenAI OAuth 로그인 시작 URL 발급(PKCE).
+
+### GET `/api/llm/oauth/callback`
+OAuth redirect callback(code/state) 처리 후 auth profile 저장.
+
+### GET `/api/llm/oauth/status?provider=openai`
+저장된 OAuth 연결 상태 확인.
+
+### POST `/api/llm/oauth/logout`
+저장된 provider 인증 제거.
+
+---
+
 ## 1) Analyze
 
 ### POST `/api/analyze`
