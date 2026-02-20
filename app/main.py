@@ -511,20 +511,72 @@ async def checklist_execute(req: Request) -> Dict[str, Any]:
 async def checklist_execute_async(req: Request) -> Dict[str, Any]:
     payload = await req.json()
     cfg = _extract_execute_payload(payload)
+    batch_size = max(1, int(payload.get("batchSize", 20) or 20))
     job_id = f"job_{uuid4().hex[:12]}"
-    execute_jobs[job_id] = {"ok": True, "jobId": job_id, "status": "queued", "createdAt": int(time.time() * 1000)}
+    total_rows = len(cfg.get("rows") or [])
+    execute_jobs[job_id] = {
+        "ok": True,
+        "jobId": job_id,
+        "status": "queued",
+        "createdAt": int(time.time() * 1000),
+        "progress": {"doneRows": 0, "totalRows": total_rows, "percent": 0},
+    }
 
     async def _runner() -> None:
         execute_jobs[job_id]["status"] = "running"
         execute_jobs[job_id]["startedAt"] = int(time.time() * 1000)
         try:
-            out = await _execute_and_finalize(cfg)
-            execute_jobs[job_id] = {**execute_jobs[job_id], **out, "status": "done", "endedAt": int(time.time() * 1000)}
+            rows_all = cfg.get("rows") or []
+            merged_rows: list[Dict[str, Any]] = []
+            merged_summary = {"PASS": 0, "FAIL": 0, "BLOCKED": 0}
+            last_cov: Dict[str, Any] = {}
+
+            for i in range(0, len(rows_all), batch_size):
+                chunk = rows_all[i:i + batch_size]
+                part = await execute_checklist_rows(
+                    chunk,
+                    max_rows=len(chunk),
+                    auth=cfg["auth"],
+                    exhaustive=cfg["exhaustive"],
+                    exhaustive_clicks=cfg["exhaustive_clicks"],
+                    exhaustive_inputs=cfg["exhaustive_inputs"],
+                    exhaustive_depth=cfg["exhaustive_depth"],
+                    exhaustive_budget_ms=cfg["exhaustive_budget_ms"],
+                    allow_risky_actions=cfg["allow_risky_actions"],
+                )
+                if not part.get("ok"):
+                    raise Exception(str(part.get("error") or "execute failed"))
+
+                merged_rows.extend(part.get("rows") or [])
+                s = part.get("summary") or {}
+                merged_summary["PASS"] += int(s.get("PASS") or 0)
+                merged_summary["FAIL"] += int(s.get("FAIL") or 0)
+                merged_summary["BLOCKED"] += int(s.get("BLOCKED") or 0)
+                last_cov = part.get("coverage") or last_cov
+
+                done = min(len(rows_all), i + len(chunk))
+                execute_jobs[job_id]["progress"] = {
+                    "doneRows": done,
+                    "totalRows": len(rows_all),
+                    "percent": int((done / max(1, len(rows_all))) * 100),
+                }
+
+            final_sheet = write_final_testsheet(cfg["run_id"], cfg["project_name"], merged_rows)
+            execute_jobs[job_id] = {
+                **execute_jobs[job_id],
+                "ok": True,
+                "status": "done",
+                "summary": merged_summary,
+                "coverage": last_cov,
+                "rows": merged_rows,
+                "finalSheet": final_sheet,
+                "endedAt": int(time.time() * 1000),
+            }
         except Exception as e:
             execute_jobs[job_id] = {**execute_jobs[job_id], "ok": False, "status": "error", "error": str(e), "endedAt": int(time.time() * 1000)}
 
     asyncio.create_task(_runner())
-    return {"ok": True, "jobId": job_id, "status": "queued"}
+    return {"ok": True, "jobId": job_id, "status": "queued", "progress": execute_jobs[job_id].get("progress")}
 
 
 @app.get("/api/checklist/execute/status/{job_id}")
