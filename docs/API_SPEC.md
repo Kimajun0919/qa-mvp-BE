@@ -581,6 +581,11 @@ Response fields
   - `oneClickDual`: true
   - `user`, `admin`: single 결과 구조
   - `userPhase[]`, `adminPhase[]`, `bridgePhase[]`: 단계별 상태 요약
+  - `userPhase`에는 `user.signupAttempt` 단계가 포함되며 구조는 `{status, reason, signals}`
+    - `status`: `ATTEMPTED | SKIPPED | BLOCKED | FAILED`
+    - `reason`: 판단/실패 사유 문자열
+    - `signals`: 탐지/시도 신호 객체
+      - 예: `candidateUrls`, `visitedUrls`, `matchedKeywords`, `detectedFields`, `captchaDetected`, `submitDetected`, `submitted`, `urlChangedAfterSubmit`, `emailVerificationHint`
   - `finalStatus`, `summary`, `analysisReports`
 
 Errors

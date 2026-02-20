@@ -27,6 +27,7 @@ from app.services.storage import get_bundle, migrate, save_analysis, save_flows
 from app.services.structure_map import build_structure_map
 from app.services.state_transition import run_transition_check
 from app.services.qa_templates import build_template_steps, list_templates
+from app.services.user_signup import attempt_user_signup
 
 APP_NAME = "qa-mvp-fastapi"
 NODE_API_BASE = os.getenv("QA_NODE_API_BASE", "http://127.0.0.1:4173").rstrip("/")
@@ -758,13 +759,25 @@ async def oneclick(req: Request) -> Dict[str, Any]:
         if not user_res.get("ok"):
             raise HTTPException(status_code=int(user_res.get("status") or 500), detail={"ok": False, "error": f"user flow failed: {user_res.get('error')}"})
 
+        signup_result: Dict[str, Any] = {
+            "status": "SKIPPED",
+            "reason": "autoUserSignup disabled",
+            "signals": {"autoUserSignup": False},
+        }
+        if auto_user_signup:
+            user_bundle = _load_bundle(str(user_res.get("analysisId") or "")) or {}
+            try:
+                signup_result = await attempt_user_signup(user_base, user_bundle)
+            except Exception as e:
+                signup_result = {"status": "FAILED", "reason": str(e), "signals": {"autoUserSignup": True}}
+
         admin_res = await _run_oneclick_single(admin_base, provider=provider, model=model, auth=admin_auth, llm_auth=llm_auth)
         if not admin_res.get("ok"):
             raise HTTPException(status_code=int(admin_res.get("status") or 500), detail={"ok": False, "error": f"admin flow failed: {admin_res.get('error')}"})
 
         user_phase = [
             {"name": "user.analyze+run", "status": "PASS" if user_res.get("ok") else "FAIL", "analysisId": user_res.get("analysisId"), "runId": user_res.get("runId")},
-            {"name": "user.signupAttempt", "status": "PASS" if auto_user_signup else "SKIPPED", "note": "captcha/email verification sites may be blocked"},
+            {"name": "user.signupAttempt", **signup_result},
         ]
         admin_phase = [
             {"name": "admin.analyze+run", "status": "PASS" if admin_res.get("ok") else "FAIL", "analysisId": admin_res.get("analysisId"), "runId": admin_res.get("runId")},
