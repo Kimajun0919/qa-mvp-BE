@@ -386,9 +386,11 @@ Response fields
   - `coverage.exhaustive.allowRiskyActions`: 위험 액션 클릭 허용 여부
   - `coverage.exhaustive.fuzzProfile`: 적용된 폼 퍼징 프로필명
 - `loginUsed`: boolean
-- `rows`: executed rows (`실행결과`,`증거`,`증거메타`,`실패사유`,`실패코드`,`실행메타`,`요소통계` 포함)
+- `failureCodeHints`: object (실패코드별 대응 가이드 매핑, 예: `{ "HTTP_ERROR": "..." }`)
+- `rows`: executed rows (`실행결과`,`증거`,`증거메타`,`실패사유`,`실패코드`,`실패대응가이드`,`remediationHint`,`실행메타`,`요소통계` 포함)
   - `실행메타.scenarioKind`: `AUTH|VALIDATION|INTERACTION|RESPONSIVE|PUBLISHING|SMOKE`
   - `실패코드` 예시: `HTTP_ERROR`,`SELECTOR_NOT_FOUND`,`ASSERT_NO_STATE_CHANGE`,`ASSERT_VALIDATION_MISSING`,`BLOCKED_TIMEOUT`
+  - `실패대응가이드`/`remediationHint`: 해당 `실패코드`의 권장 조치 문구
   - `증거메타`: `screenshotPath`,`observedUrl`,`title`,`httpStatus`,`scenarioKind`,`timestamp`
 - `finalSheet`: object (`csv`,`xlsx`)
 
@@ -409,7 +411,7 @@ Response fields
 - `ok`: boolean
 - `jobId`: string
 - `status`: `queued|running|done|error`
-- `summary`,`coverage`,`rows`,`finalSheet` (status=done 시)
+- `summary`,`coverage`,`failureCodeHints`,`rows`,`finalSheet` (status=done 시)
 - `error` (status=error 시)
 
 ### GET `/api/qa/templates`

@@ -495,6 +495,7 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "ok": True,
         "summary": result.get("summary"),
         "coverage": result.get("coverage"),
+        "failureCodeHints": result.get("failureCodeHints") or {},
         "loginUsed": result.get("loginUsed", False),
         "rows": result.get("rows"),
         "finalSheet": final_sheet,
@@ -533,6 +534,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
             rows_all = cfg.get("rows") or []
             merged_rows: list[Dict[str, Any]] = []
             merged_summary = {"PASS": 0, "FAIL": 0, "BLOCKED": 0}
+            merged_hints: Dict[str, str] = {}
             last_cov: Dict[str, Any] = {}
 
             for i in range(0, len(rows_all), batch_size):
@@ -557,6 +559,11 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 merged_summary["FAIL"] += int(s.get("FAIL") or 0)
                 merged_summary["BLOCKED"] += int(s.get("BLOCKED") or 0)
                 last_cov = part.get("coverage") or last_cov
+                hints = part.get("failureCodeHints") or {}
+                if isinstance(hints, dict):
+                    for k, v in hints.items():
+                        if isinstance(k, str) and isinstance(v, str):
+                            merged_hints[k] = v
 
                 done = min(len(rows_all), i + len(chunk))
                 execute_jobs[job_id]["progress"] = {
@@ -572,6 +579,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "status": "done",
                 "summary": merged_summary,
                 "coverage": last_cov,
+                "failureCodeHints": merged_hints,
                 "rows": merged_rows,
                 "finalSheet": final_sheet,
                 "endedAt": int(time.time() * 1000),

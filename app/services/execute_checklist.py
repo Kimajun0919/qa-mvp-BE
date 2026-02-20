@@ -63,6 +63,26 @@ def _failure_code(status: str, reason: str) -> str:
     return "ASSERT_UNKNOWN"
 
 
+def _remediation_hint(code: str) -> str:
+    hints = {
+        "OK": "조치 필요 없음",
+        "BLOCKED_TIMEOUT": "페이지/요소 로딩 타임아웃입니다. 네트워크 상태를 확인하고 대기시간(wait/retry)을 늘리세요.",
+        "BLOCKED_RUNTIME": "실행 중 예외가 발생했습니다. 콘솔 에러/서버 로그를 확인하고 재현 스텝을 축소해 원인을 분리하세요.",
+        "CONFIG_INVALID_URL": "체크리스트의 module/화면 URL을 절대경로(http/https)로 보정하세요.",
+        "HTTP_ERROR": "대상 URL의 응답코드(4xx/5xx)를 해결하세요. 라우팅, 권한, 백엔드 에러 로그를 점검하세요.",
+        "ASSERT_TITLE_MISSING": "문서 title이 비어있습니다. 페이지 메타/title 렌더링 로직을 추가/복구하세요.",
+        "ASSERT_RENDER_WEAK": "본문 렌더가 빈약합니다. SSR/CSR 렌더 완료, 권한 가드, 데이터 바인딩 상태를 점검하세요.",
+        "ASSERT_ERROR_SIGNAL": "화면에 오류 신호가 감지되었습니다. FE 콘솔/BE 에러 로그를 확인해 예외를 처리하세요.",
+        "SELECTOR_NOT_FOUND": "클릭 가능한 핵심 요소를 찾지 못했습니다. CTA selector/role/text를 명시하고 접근성 속성을 보강하세요.",
+        "ASSERT_NO_STATE_CHANGE": "클릭 후 상태 변화가 없습니다. 라우팅, 모달 open 상태, disabled 조건을 검증하세요.",
+        "ASSERT_VALIDATION_MISSING": "유효성 에러 노출이 없습니다. required/invalid 처리 및 에러 메시지 렌더를 구현하세요.",
+        "ASSERT_AUTH_GUARD_MISSING": "비로그인 차단 신호가 없습니다. 인증 가드/리다이렉트/403 처리를 점검하세요.",
+        "ASSERT_LAYOUT_OVERFLOW": "레이아웃 overflow가 감지되었습니다. 고정폭 요소와 반응형 브레이크포인트를 조정하세요.",
+        "ASSERT_UNKNOWN": "원인 미분류 실패입니다. 증거메타와 스크린샷 기준으로 재현 후 실패코드 매핑을 확장하세요.",
+    }
+    return hints.get(code, hints["ASSERT_UNKNOWN"])
+
+
 async def _login_if_possible(page: Any, auth: Dict[str, Any]) -> bool:
     login_url = str(auth.get("loginUrl") or "").strip()
     user_id = str(auth.get("userId") or "").strip()
@@ -437,6 +457,7 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
 
     executed: List[Dict[str, Any]] = []
     summary = {"PASS": 0, "FAIL": 0, "BLOCKED": 0}
+    failure_code_hints: Dict[str, str] = {}
     coverage_totals = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
     covered = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
 
@@ -488,6 +509,9 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
                 evidence = ""
 
             fail_code = _failure_code(status, reason)
+            remediation_hint = _remediation_hint(fail_code)
+            if fail_code != "OK":
+                failure_code_hints[fail_code] = remediation_hint
             evidence_meta = {
                 "screenshotPath": evidence,
                 "observedUrl": meta.get("urlAfter") or url,
@@ -504,6 +528,8 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
             nr["증거메타"] = evidence_meta
             nr["실패사유"] = reason
             nr["실패코드"] = fail_code
+            nr["실패대응가이드"] = remediation_hint
+            nr["remediationHint"] = remediation_hint
             nr["확인"] = status
             nr["actual"] = status if not reason else f"{status}: {reason}"
             if not nr.get("테스트시나리오"):
@@ -555,4 +581,4 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
         "rowCoverage": round((summary.get("PASS", 0) + summary.get("FAIL", 0)) / total_rows, 3),
         "exhaustive": {"enabled": exhaustive, "probeSummary": probe_summary if 'probe_summary' in locals() else {}, "allowRiskyActions": allow_risky_actions, "fuzzProfile": "typed-input-v1"},
     }
-    return {"ok": True, "rows": executed, "summary": summary, "coverage": coverage, "loginUsed": login_used}
+    return {"ok": True, "rows": executed, "summary": summary, "coverage": coverage, "loginUsed": login_used, "failureCodeHints": failure_code_hints}
