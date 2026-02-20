@@ -42,3 +42,53 @@ Server: `uvicorn app.main:app --host 127.0.0.1 --port 8010`
 ## API Compatibility Notes
 - No endpoint paths removed/renamed.
 - Existing fields retained; `/health.ok` now reflects service liveness while upstream dependency state moved to explicit `upstreamOk`.
+
+---
+
+## Cycle7 BE Hotfix (Analyze parity: httpbin/docs/example)
+
+### Goal
+- Reduce low-candidate failure tendency on sparse form targets (ex: `httpbin/forms/post`)
+- Improve docs drift parity signaling while preserving API compatibility
+
+### Code Changes
+- `app/services/analyze.py`
+  - Added `paritySignals` derivation (`docsDriftRisk`, docs/form counts, single-page-form tendency)
+  - Enhanced heuristic candidate inference:
+    - new form-aware candidates: `Form Submission Journey`, `Single-Page Form Probe`
+    - docs-aware candidate: `Docs Reference Integrity`
+  - Added minimum heuristic candidate floor (4) to avoid sparse-site under-generation
+  - Kept existing response schema; only additive field inside `metrics`
+- `scripts/smoke_candidate_parity.py`
+  - Focused smoke targets updated to:
+    - `https://httpbin.org/forms/post`
+    - `https://docs.openclaw.ai`
+    - `http://example.com`
+  - Assertions updated for Cycle7 parity checks (candidate floor + form/docs signals)
+- `docs/API_SPEC.md`
+  - Documented optional `metrics.paritySignals` (additive/backward-compatible)
+
+### Verification Evidence
+
+1) Compile
+```bash
+python -m compileall app scripts
+```
+Result: success (no compile errors)
+
+2) Focused smoke
+```bash
+QA_LLM_PROVIDER=openai python scripts/smoke_candidate_parity.py
+```
+Result highlights:
+- `https://httpbin.org/forms/post`
+  - `candidateCount=4`
+  - includes `Form Submission Journey`, `Single-Page Form Probe`
+  - `paritySignals.formSignalCount=1`
+- `https://docs.openclaw.ai`
+  - `candidateCount=6`
+  - includes `Documentation Discovery`, `Docs Reference Integrity`
+  - `paritySignals.docsDriftRisk=MEDIUM`
+- `http://example.com`
+  - `candidateCount=4`
+  - stable generic floor candidates preserved

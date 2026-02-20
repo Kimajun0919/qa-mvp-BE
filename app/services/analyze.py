@@ -184,12 +184,37 @@ def _priority_score(path: str, role: str) -> int:
     return min(score, 100)
 
 
+def _collect_parity_signals(pages: List[PageInfo], menu_rows: List[Dict[str, Any]], form_type_counts: Dict[str, int], auth_likely: bool) -> Dict[str, Any]:
+    tokens: List[str] = []
+    for p in pages:
+        tokens.append((p.path or "").lower())
+        tokens.append((p.title or "").lower())
+    for m in menu_rows:
+        tokens.append(str(m.get("href") or "").lower())
+        tokens.append(str(m.get("name") or "").lower())
+
+    docs_hits = sum(1 for t in tokens if any(k in t for k in ["/docs", "reference", "guide", "tutorial", "api", "changelog", "release", "sdk"]))
+    form_total = int(sum(int(v or 0) for v in (form_type_counts or {}).values()))
+    strong_form = form_total > 0 and int(form_type_counts.get("UNKNOWN", 0) or 0) <= max(1, form_total // 2)
+    has_single_page_form_tendency = len({p.path for p in pages}) <= 2 and form_total > 0
+
+    return {
+        "docsDriftRisk": "HIGH" if docs_hits >= 4 else ("MEDIUM" if docs_hits >= 2 else "LOW"),
+        "docsSignalCount": docs_hits,
+        "formSignalCount": form_total,
+        "strongFormSignal": strong_form,
+        "singlePageFormTendency": has_single_page_form_tendency,
+        "authLikely": bool(auth_likely),
+    }
+
+
 def _infer_candidate_flows(
     pages: List[PageInfo],
     menu_rows: List[Dict[str, Any]],
     service_type: str,
     auth_likely: bool,
     form_type_counts: Dict[str, int],
+    parity_signals: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     path_tokens: set[str] = set()
     for p in pages:
@@ -219,12 +244,25 @@ def _infer_candidate_flows(
         },
     ]
 
-    if _has_any("/docs", "/doc", "/guide", "/tutorial", "/reference", "/api"):
+    parity_signals = parity_signals or {}
+    docs_signal_count = int(parity_signals.get("docsSignalCount") or 0)
+
+    if _has_any("/docs", "/doc", "/guide", "/tutorial", "/reference", "/api") or docs_signal_count >= 2:
         inferred.append(
             {
                 "name": "Documentation Discovery",
                 "platformType": "LANDING",
                 "confidence": 0.78,
+                "status": "PROPOSED",
+            }
+        )
+
+    if docs_signal_count >= 3:
+        inferred.append(
+            {
+                "name": "Docs Reference Integrity",
+                "platformType": "LANDING",
+                "confidence": 0.73,
                 "status": "PROPOSED",
             }
         )
@@ -259,6 +297,26 @@ def _infer_candidate_flows(
             }
         )
 
+    if form_type_counts.get("CONTACT", 0) > 0:
+        inferred.append(
+            {
+                "name": "Form Submission Journey",
+                "platformType": "LANDING",
+                "confidence": 0.77,
+                "status": "PROPOSED",
+            }
+        )
+
+    if parity_signals.get("singlePageFormTendency"):
+        inferred.append(
+            {
+                "name": "Single-Page Form Probe",
+                "platformType": "LANDING",
+                "confidence": 0.7,
+                "status": "PROPOSED",
+            }
+        )
+
     if auth_likely:
         inferred.append(
             {
@@ -286,6 +344,20 @@ def _infer_candidate_flows(
         k = (str(c.get("name") or "").strip().lower(), str(c.get("platformType") or "").strip().upper())
         if not k[0]:
             continue
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(c)
+
+    # Keep backward-compatible schema, but avoid low-candidate tendency on sparse targets.
+    floor_candidates = [
+        {"name": "Primary Path Smoke", "platformType": "LANDING", "confidence": 0.66, "status": "PROPOSED"},
+        {"name": "Navigation Stability", "platformType": "LANDING", "confidence": 0.64, "status": "PROPOSED"},
+    ]
+    for c in floor_candidates:
+        if len(deduped) >= 4:
+            break
+        k = (str(c.get("name") or "").strip().lower(), str(c.get("platformType") or "").strip().upper())
         if k in seen:
             continue
         seen.add(k)
@@ -485,6 +557,8 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
     service_type = _guess_service_type(target, pages[0].title)
     auth_likely = auth_pages > 0
 
+    parity_signals = _collect_parity_signals(pages, menu_rows, form_type_counts, auth_likely)
+
     metrics = {
         "queued": len(visited) + len(queue),
         "crawled": len(pages),
@@ -497,6 +571,7 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
         "criticalPages": len([p for p in pages if p.priority_tier == "HIGH"]),
         "avgPriorityScore": int(sum(p.priority_score for p in pages) / len(pages)),
         "authGatePages": auth_pages,
+        "paritySignals": parity_signals,
     }
 
     # LLM-assisted candidate generation (fallback heuristic)
@@ -507,7 +582,7 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
     planner_mode = "llm" if ok else "heuristic"
     planner_reason = "" if ok else content_or_err
 
-    inferred_candidates = _infer_candidate_flows(pages, menu_rows, service_type, auth_likely, form_type_counts)
+    inferred_candidates = _infer_candidate_flows(pages, menu_rows, service_type, auth_likely, form_type_counts, parity_signals=parity_signals)
 
     candidates: List[Dict[str, Any]] = []
     if ok:

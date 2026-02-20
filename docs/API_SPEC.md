@@ -96,7 +96,7 @@ Response fields
 - `limits`: object
 - `plannerMode`: `"llm" | "heuristic"`
 - `plannerReason`: string
-- `metrics`: object
+- `metrics`: object (`paritySignals` 포함 가능: `docsDriftRisk/docsSignalCount/formSignalCount/...`)
 - `reports`: object (`sitemapPath`, `menuPath`, `qualityPath`)
 - `advisories`: array (robots/auth/limited-crawl 안내)
 - `robots`: object (`blockAll`, `hasRules`)
