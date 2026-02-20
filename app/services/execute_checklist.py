@@ -89,6 +89,29 @@ def _remediation_hint(code: str) -> str:
     return hints.get(code, hints["ASSERT_UNKNOWN"])
 
 
+def _retry_class(status: str, failure_code: str, reason: str = "") -> str:
+    if status == "PASS":
+        return "NONE"
+
+    code = (failure_code or "").upper().strip()
+    low_reason = (reason or "").lower()
+
+    if code in {"BLOCKED_TIMEOUT", "BLOCKED_RUNTIME"}:
+        return "TRANSIENT"
+    if code in {"HTTP_ERROR"}:
+        return "TRANSIENT" if any(k in low_reason for k in ["429", "502", "503", "504", "timeout"]) else "CONDITIONAL"
+    if code in {"SELECTOR_NOT_FOUND", "ASSERT_NO_STATE_CHANGE"}:
+        return "WEAK_SIGNAL"
+    if code in {"CONFIG_INVALID_URL", "ASSERT_AUTH_GUARD_MISSING", "ASSERT_VALIDATION_MISSING", "ASSERT_LAYOUT_OVERFLOW", "ASSERT_RESPONSIVE_OVERFLOW", "ASSERT_INTERACTION_SURFACE_LOW", "ASSERT_TITLE_MISSING", "ASSERT_RENDER_WEAK", "ASSERT_ERROR_SIGNAL"}:
+        return "NON_RETRYABLE"
+
+    return "CONDITIONAL"
+
+
+def _retry_eligible(retry_class: str) -> bool:
+    return retry_class in {"TRANSIENT", "WEAK_SIGNAL", "CONDITIONAL"}
+
+
 async def _login_if_possible(page: Any, auth: Dict[str, Any]) -> bool:
     login_url = str(auth.get("loginUrl") or "").strip()
     user_id = str(auth.get("userId") or "").strip()
@@ -466,6 +489,11 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
     failure_code_hints: Dict[str, str] = {}
     coverage_totals = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
     covered = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
+    retry_stats: Dict[str, Any] = {
+        "eligibleRows": 0,
+        "ineligibleRows": 0,
+        "byClass": {"NONE": 0, "TRANSIENT": 0, "WEAK_SIGNAL": 0, "CONDITIONAL": 0, "NON_RETRYABLE": 0},
+    }
 
     async with async_playwright() as p:  # type: ignore[misc]
         browser = await p.chromium.launch(headless=True)
@@ -516,6 +544,13 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
 
             fail_code = _failure_code(status, reason)
             remediation_hint = _remediation_hint(fail_code)
+            retry_class = _retry_class(status, fail_code, reason)
+            retry_eligible = _retry_eligible(retry_class)
+            retry_stats["byClass"][retry_class] = int(retry_stats["byClass"].get(retry_class, 0)) + 1
+            if retry_eligible:
+                retry_stats["eligibleRows"] = int(retry_stats.get("eligibleRows", 0)) + 1
+            else:
+                retry_stats["ineligibleRows"] = int(retry_stats.get("ineligibleRows", 0)) + 1
             if fail_code != "OK":
                 failure_code_hints[fail_code] = remediation_hint
             evidence_meta = {
@@ -548,6 +583,10 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
                 nr["action"] = action
             if expected and not nr.get("expected"):
                 nr["expected"] = expected
+            meta["retryClass"] = retry_class
+            meta["retryEligible"] = retry_eligible
+            nr["retryClass"] = retry_class
+            nr["retryEligible"] = retry_eligible
             nr["실행메타"] = meta
             nr["요소통계"] = elems
             nr["실행시각"] = ts
@@ -587,4 +626,6 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
         "rowCoverage": round((summary.get("PASS", 0) + summary.get("FAIL", 0)) / total_rows, 3),
         "exhaustive": {"enabled": exhaustive, "probeSummary": probe_summary if 'probe_summary' in locals() else {}, "allowRiskyActions": allow_risky_actions, "fuzzProfile": "typed-input-v1"},
     }
-    return {"ok": True, "rows": executed, "summary": summary, "coverage": coverage, "loginUsed": login_used, "failureCodeHints": failure_code_hints}
+    retry_stats["totalRows"] = len(executed)
+    retry_stats["retryRate"] = round(int(retry_stats.get("eligibleRows", 0)) / max(1, len(executed)), 3)
+    return {"ok": True, "rows": executed, "summary": summary, "coverage": coverage, "loginUsed": login_used, "failureCodeHints": failure_code_hints, "retryStats": retry_stats}

@@ -496,6 +496,7 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "summary": result.get("summary"),
         "coverage": result.get("coverage"),
         "failureCodeHints": result.get("failureCodeHints") or {},
+        "retryStats": result.get("retryStats") or {},
         "loginUsed": result.get("loginUsed", False),
         "rows": result.get("rows"),
         "finalSheet": final_sheet,
@@ -536,6 +537,11 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
             merged_summary = {"PASS": 0, "FAIL": 0, "BLOCKED": 0}
             merged_hints: Dict[str, str] = {}
             last_cov: Dict[str, Any] = {}
+            merged_retry_stats: Dict[str, Any] = {
+                "eligibleRows": 0,
+                "ineligibleRows": 0,
+                "byClass": {"NONE": 0, "TRANSIENT": 0, "WEAK_SIGNAL": 0, "CONDITIONAL": 0, "NON_RETRYABLE": 0},
+            }
 
             for i in range(0, len(rows_all), batch_size):
                 chunk = rows_all[i:i + batch_size]
@@ -565,6 +571,15 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                         if isinstance(k, str) and isinstance(v, str):
                             merged_hints[k] = v
 
+                retry_stats = part.get("retryStats") or {}
+                if isinstance(retry_stats, dict):
+                    merged_retry_stats["eligibleRows"] += int(retry_stats.get("eligibleRows") or 0)
+                    merged_retry_stats["ineligibleRows"] += int(retry_stats.get("ineligibleRows") or 0)
+                    by_class = retry_stats.get("byClass") if isinstance(retry_stats.get("byClass"), dict) else {}
+                    for cls, cnt in by_class.items():
+                        if isinstance(cls, str):
+                            merged_retry_stats["byClass"][cls] = int(merged_retry_stats["byClass"].get(cls, 0)) + int(cnt or 0)
+
                 done = min(len(rows_all), i + len(chunk))
                 execute_jobs[job_id]["progress"] = {
                     "doneRows": done,
@@ -573,6 +588,8 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 }
 
             final_sheet = write_final_testsheet(cfg["run_id"], cfg["project_name"], merged_rows)
+            merged_retry_stats["totalRows"] = len(merged_rows)
+            merged_retry_stats["retryRate"] = round(int(merged_retry_stats.get("eligibleRows", 0)) / max(1, len(merged_rows)), 3)
             execute_jobs[job_id] = {
                 **execute_jobs[job_id],
                 "ok": True,
@@ -580,6 +597,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "summary": merged_summary,
                 "coverage": last_cov,
                 "failureCodeHints": merged_hints,
+                "retryStats": merged_retry_stats,
                 "rows": merged_rows,
                 "finalSheet": final_sheet,
                 "endedAt": int(time.time() * 1000),
