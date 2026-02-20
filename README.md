@@ -20,6 +20,8 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 See `docs/API_SPEC.md`.
 
+OAuth setup: `docs/OAUTH_SETUP.md`
+
 ## Backend full smoke
 ```bash
 FASTAPI_BASE=http://127.0.0.1:8000 bash ./scripts/ops_split_check.sh
