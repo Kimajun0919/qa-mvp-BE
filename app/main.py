@@ -387,18 +387,7 @@ async def checklist_auto(req: Request) -> Dict[str, Any]:
     return out
 
 
-@app.post("/api/oneclick")
-async def oneclick(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
-    base_url = str(payload.get("baseUrl", "")).strip()
-    if not base_url:
-        raise HTTPException(status_code=400, detail={"ok": False, "error": "baseUrl required"})
-
-    provider = payload.get("llmProvider")
-    model = (str(payload.get("llmModel", "")).strip() or None)
-    auth = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
-
-    # 1) analyze
+async def _run_oneclick_single(base_url: str, provider: Any = None, model: str | None = None, auth: Dict[str, Any] | None = None) -> Dict[str, Any]:
     analyzed = await analyze_site(base_url, provider=provider, model=model)
     analysis_id = str(analyzed.get("analysisId") or f"py_analysis_{int(time.time() * 1000)}")
     native_pages = analyzed.get("_native", {}).get("pages") or [analyzed.get("_native", {}).get("page", {})]
@@ -409,10 +398,9 @@ async def oneclick(req: Request) -> Dict[str, Any]:
         [],
         analyzed.get("candidates", []),
         reports=analyzed.get("reports", {}),
-        auth=auth,
+        auth=(auth or {}),
     )
 
-    # 2) auto finalize flows from candidates
     candidates = analyzed.get("candidates", [])
     auto_flows = []
     for c in candidates[:3]:
@@ -441,18 +429,15 @@ async def oneclick(req: Request) -> Dict[str, Any]:
 
     finalized = finalize_flows(native_analysis_store, analysis_id, auto_flows)
     if not finalized.get("ok"):
-        raise HTTPException(status_code=500, detail={"ok": False, "error": finalized.get("error") or "finalize failed"})
+        return {"ok": False, "error": finalized.get("error") or "finalize failed", "status": 500}
     save_flows(analysis_id, auto_flows)
 
-    # 3) run
     ran = await run_flows(native_analysis_store, analysis_id, provider=provider, model=model)
     if not ran.get("ok"):
-        code = int(ran.get("status") or 500)
-        raise HTTPException(status_code=code, detail={"ok": False, "error": ran.get("error")})
+        return {"ok": False, "error": ran.get("error"), "status": int(ran.get("status") or 500)}
 
     return {
         "ok": True,
-        "oneClick": True,
         "analysisId": analysis_id,
         "runId": ran.get("runId"),
         "finalStatus": ran.get("finalStatus"),
@@ -472,6 +457,55 @@ async def oneclick(req: Request) -> Dict[str, Any]:
         "plannerReason": analyzed.get("plannerReason"),
         "analysisReports": analyzed.get("reports", {}),
     }
+
+
+@app.post("/api/oneclick")
+async def oneclick(req: Request) -> Dict[str, Any]:
+    payload = await req.json()
+    provider = payload.get("llmProvider")
+    model = (str(payload.get("llmModel", "")).strip() or None)
+
+    dual = payload.get("dualContext") if isinstance(payload.get("dualContext"), dict) else {}
+    if dual:
+        user_base = str(dual.get("userBaseUrl") or payload.get("baseUrl") or "").strip()
+        admin_base = str(dual.get("adminBaseUrl") or user_base).strip()
+        admin_auth = dual.get("adminAuth") if isinstance(dual.get("adminAuth"), dict) else (payload.get("auth") if isinstance(payload.get("auth"), dict) else {})
+        auto_user_signup = bool(dual.get("autoUserSignup", True))
+        if not user_base:
+            raise HTTPException(status_code=400, detail={"ok": False, "error": "dualContext.userBaseUrl required"})
+
+        user_res = await _run_oneclick_single(user_base, provider=provider, model=model, auth={})
+        if not user_res.get("ok"):
+            raise HTTPException(status_code=int(user_res.get("status") or 500), detail={"ok": False, "error": f"user flow failed: {user_res.get('error')}"})
+
+        admin_res = await _run_oneclick_single(admin_base, provider=provider, model=model, auth=admin_auth)
+        if not admin_res.get("ok"):
+            raise HTTPException(status_code=int(admin_res.get("status") or 500), detail={"ok": False, "error": f"admin flow failed: {admin_res.get('error')}"})
+
+        return {
+            "ok": True,
+            "oneClick": True,
+            "oneClickDual": True,
+            "dualContext": {
+                "userBaseUrl": user_base,
+                "adminBaseUrl": admin_base,
+                "autoUserSignup": auto_user_signup,
+            },
+            "user": user_res,
+            "admin": admin_res,
+            "finalStatus": "PASS" if (user_res.get("finalStatus") == "PASS" and admin_res.get("finalStatus") == "PASS") else "PASS_WITH_WARNINGS",
+            "summary": {"user": user_res.get("summary"), "admin": admin_res.get("summary")},
+            "analysisReports": {"user": user_res.get("analysisReports", {}), "admin": admin_res.get("analysisReports", {})},
+        }
+
+    base_url = str(payload.get("baseUrl", "")).strip()
+    if not base_url:
+        raise HTTPException(status_code=400, detail={"ok": False, "error": "baseUrl required"})
+    auth = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
+    single = await _run_oneclick_single(base_url, provider=provider, model=model, auth=auth)
+    if not single.get("ok"):
+        raise HTTPException(status_code=int(single.get("status") or 500), detail={"ok": False, "error": single.get("error")})
+    return {"ok": True, "oneClick": True, **single}
 
 
 @app.post("/api/flows/finalize")
