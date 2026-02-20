@@ -337,8 +337,10 @@ Response fields
   - `coverage.exhaustive.allowRiskyActions`: 위험 액션 클릭 허용 여부
   - `coverage.exhaustive.fuzzProfile`: 적용된 폼 퍼징 프로필명
 - `loginUsed`: boolean
-- `rows`: executed rows (`실행결과`,`증거`,`실패사유`,`실행메타`,`요소통계` 포함)
+- `rows`: executed rows (`실행결과`,`증거`,`증거메타`,`실패사유`,`실패코드`,`실행메타`,`요소통계` 포함)
   - `실행메타.scenarioKind`: `AUTH|VALIDATION|INTERACTION|RESPONSIVE|PUBLISHING|SMOKE`
+  - `실패코드` 예시: `HTTP_ERROR`,`SELECTOR_NOT_FOUND`,`ASSERT_NO_STATE_CHANGE`,`ASSERT_VALIDATION_MISSING`,`BLOCKED_TIMEOUT`
+  - `증거메타`: `screenshotPath`,`observedUrl`,`title`,`httpStatus`,`scenarioKind`,`timestamp`
 - `finalSheet`: object (`csv`,`xlsx`)
 
 ### POST `/api/checklist/execute/async`

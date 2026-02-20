@@ -32,6 +32,37 @@ def _scenario_kind(text: str, category: str = "") -> str:
     return "SMOKE"
 
 
+def _failure_code(status: str, reason: str) -> str:
+    if status == "PASS":
+        return "OK"
+    r = (reason or "").lower()
+    if status == "BLOCKED":
+        if "timeout" in r:
+            return "BLOCKED_TIMEOUT"
+        return "BLOCKED_RUNTIME"
+    if "유효한 url 없음" in r:
+        return "CONFIG_INVALID_URL"
+    if "http" in r:
+        return "HTTP_ERROR"
+    if "타이틀 없음" in reason:
+        return "ASSERT_TITLE_MISSING"
+    if "본문이 너무 짧" in reason:
+        return "ASSERT_RENDER_WEAK"
+    if "오류/예외" in reason:
+        return "ASSERT_ERROR_SIGNAL"
+    if "클릭 가능한 주요 요소 미발견" in reason:
+        return "SELECTOR_NOT_FOUND"
+    if "클릭 후 상태/이동 변화 미확인" in reason:
+        return "ASSERT_NO_STATE_CHANGE"
+    if "유효성/에러 신호 미확인" in reason:
+        return "ASSERT_VALIDATION_MISSING"
+    if "권한/로그인 차단 신호 미확인" in reason:
+        return "ASSERT_AUTH_GUARD_MISSING"
+    if "레이아웃 오버플로우" in reason:
+        return "ASSERT_LAYOUT_OVERFLOW"
+    return "ASSERT_UNKNOWN"
+
+
 async def _login_if_possible(page: Any, auth: Dict[str, Any]) -> bool:
     login_url = str(auth.get("loginUrl") or "").strip()
     user_id = str(auth.get("userId") or "").strip()
@@ -444,6 +475,7 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
                 covered["textareas"] += min(1, int(elems.get("textareas", 0) or 0))
                 covered["editors"] += min(1, int(elems.get("editors", 0) or 0))
 
+            ts = int(time.time())
             shot = out_dir / f"exec_{int(time.time()*1000)}_{i}.png"
             evidence = ""
             try:
@@ -452,15 +484,27 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
             except Exception:
                 evidence = ""
 
+            fail_code = _failure_code(status, reason)
+            evidence_meta = {
+                "screenshotPath": evidence,
+                "observedUrl": meta.get("urlAfter") or url,
+                "title": meta.get("title") or "",
+                "httpStatus": meta.get("httpStatus") or 0,
+                "scenarioKind": meta.get("scenarioKind") or _scenario_kind(scenario, category),
+                "timestamp": ts,
+            }
+
             summary[status] = summary.get(status, 0) + 1
             nr = dict(r)
             nr["실행결과"] = status
             nr["증거"] = evidence
+            nr["증거메타"] = evidence_meta
             nr["실패사유"] = reason
+            nr["실패코드"] = fail_code
             nr["확인"] = status
             nr["실행메타"] = meta
             nr["요소통계"] = elems
-            nr["실행시각"] = int(time.time())
+            nr["실행시각"] = ts
             executed.append(nr)
 
         probe_summary = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0}
