@@ -449,8 +449,11 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
 
         target_rows = (rows or [])[:max_rows]
         for i, r in enumerate(target_rows, start=1):
-            url = _pick_url(str(r.get("화면") or ""))
-            scenario = str(r.get("테스트시나리오") or "")
+            module = str(r.get("module") or r.get("화면") or "")
+            url = _pick_url(module)
+            action = str(r.get("action") or "").strip()
+            expected = str(r.get("expected") or "").strip()
+            scenario = str(r.get("테스트시나리오") or "").strip() or (f"{action} - {expected}".strip(" -"))
             category = str(r.get("구분") or "")
 
             status = "BLOCKED"
@@ -502,6 +505,17 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
             nr["실패사유"] = reason
             nr["실패코드"] = fail_code
             nr["확인"] = status
+            nr["actual"] = status if not reason else f"{status}: {reason}"
+            if not nr.get("테스트시나리오"):
+                nr["테스트시나리오"] = scenario
+            if not nr.get("화면"):
+                nr["화면"] = module
+            if not nr.get("module"):
+                nr["module"] = module
+            if action and not nr.get("action"):
+                nr["action"] = action
+            if expected and not nr.get("expected"):
+                nr["expected"] = expected
             nr["실행메타"] = meta
             nr["요소통계"] = elems
             nr["실행시각"] = ts
@@ -511,7 +525,7 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
         if exhaustive:
             seen_urls = []
             for r in target_rows:
-                u = _pick_url(str(r.get("화면") or ""))
+                u = _pick_url(str(r.get("module") or r.get("화면") or ""))
                 if u.startswith("http://") or u.startswith("https://"):
                     if u not in seen_urls:
                         seen_urls.append(u)

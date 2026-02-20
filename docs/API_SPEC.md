@@ -267,21 +267,33 @@ Response fields
 - `ok`: boolean
 - `mode`: `"llm" | "heuristic"`
 - `reason`: string
-- `columns`: fixed array: `["화면","구분","테스트시나리오","확인"]`
+- `columns`: 확장 컬럼 배열 (기본 호환 + 세분화)
+  - 기본(호환): `화면`,`구분`,`테스트시나리오`,`확인`
+  - 세분화: `module`,`element`,`action`,`expected`,`actual`
 - `rows`: array
 - `tsv`: string
 - `conditionMatrix`: object (`surface`, `roles`, `conditions`, `count`)
 - `missingAreas`: array (`AUTH|VALIDATION|INTERACTION|RESPONSIVE|PUBLISHING`) — 커버리지 기반 누락 힌트
 
-Row schema:
+Row schema (backward compatible):
 ```json
 {
-  "화면": "로그인 화면",
+  "화면": "https://example.com/login",
   "구분": "기능",
-  "테스트시나리오": "유효한 계정 로그인 성공 확인",
-  "확인": ""
+  "테스트시나리오": "로그인 버튼 클릭 - 대시보드로 이동",
+  "확인": "",
+  "module": "https://example.com/login",
+  "element": "로그인 버튼",
+  "action": "유효한 계정으로 로그인 버튼을 클릭한다",
+  "expected": "대시보드로 이동한다",
+  "actual": ""
 }
 ```
+
+호환성 규칙:
+- 기존 4필드만 보내도 동작
+- 신규 5필드를 함께 보내면 실행/리포팅 시 우선 사용
+- 응답 `rows`에는 두 스키마가 함께 포함될 수 있음
 
 Errors
 - `400`: `screen required`
@@ -352,7 +364,17 @@ Request body:
   "allowRiskyActions": false,
   "auth": {"loginUrl":"https://example.com/login","userId":"tester","password":"***"},
   "rows": [
-    {"화면":"https://example.com/login","구분":"권한","테스트시나리오":"비로그인 접근 차단 확인","확인":""}
+    {
+      "화면":"https://example.com/login",
+      "구분":"권한",
+      "테스트시나리오":"비로그인 접근 차단 확인",
+      "확인":"",
+      "module":"https://example.com/login",
+      "element":"보호 리소스 링크",
+      "action":"비로그인 상태로 보호 화면에 접근한다",
+      "expected":"로그인 페이지로 리다이렉트된다",
+      "actual":""
+    }
   ]
 }
 ```

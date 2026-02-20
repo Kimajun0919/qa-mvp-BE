@@ -418,16 +418,19 @@ async def checklist(req: Request) -> Dict[str, Any]:
     merged = []
     seen = set()
     for r in (out.get("rows") or []) + (matrix.get("rows") or []):
-        k = str(r.get("테스트시나리오") or "").strip()
-        if not k or k in seen:
+        scenario_key = str(r.get("action") or r.get("테스트시나리오") or "").strip()
+        expected_key = str(r.get("expected") or r.get("확인") or "").strip()
+        k = f"{scenario_key}::{expected_key}"
+        if not scenario_key or k in seen:
             continue
         seen.add(k)
         merged.append(r)
 
     out["rows"] = merged[:40]
+    cols = out.get("columns") or ["화면", "구분", "테스트시나리오", "확인", "module", "element", "action", "expected", "actual"]
     out["tsv"] = "\n".join([
-        "\t".join(out.get("columns") or ["화면", "구분", "테스트시나리오", "확인"]),
-        *["\t".join(str(x.get(c, "")) for c in (out.get("columns") or ["화면", "구분", "테스트시나리오", "확인"])) for x in out["rows"]],
+        "\t".join(cols),
+        *["\t".join(str(x.get(c, "")) for c in cols) for x in out["rows"]],
     ])
     out["conditionMatrix"] = {
         "surface": matrix.get("surface"),
@@ -437,7 +440,7 @@ async def checklist(req: Request) -> Dict[str, Any]:
     }
 
     # coverage-driven missing area hints
-    text_all = "\n".join([str(x.get("테스트시나리오") or "") for x in out.get("rows") or []]).lower()
+    text_all = "\n".join([f"{x.get('action') or ''} {x.get('expected') or ''} {x.get('테스트시나리오') or ''}" for x in out.get("rows") or []]).lower()
     checks = {
         "AUTH": ["권한", "로그인", "비로그인", "접근"],
         "VALIDATION": ["유효성", "필수", "입력", "에러"],

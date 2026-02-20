@@ -2,17 +2,64 @@ from typing import Any, Dict, List, Optional
 
 from .llm import chat_json, parse_json_text
 
-COLUMNS = ["화면", "구분", "테스트시나리오", "확인"]
+BASE_COLUMNS = ["화면", "구분", "테스트시나리오", "확인"]
+GRANULAR_COLUMNS = ["module", "element", "action", "expected", "actual"]
+COLUMNS = BASE_COLUMNS + GRANULAR_COLUMNS
+
+
+def _normalize_row(row: Dict[str, Any], *, default_screen: str = "") -> Dict[str, str]:
+    module = str(
+        row.get("module")
+        or row.get("모듈")
+        or row.get("화면")
+        or row.get("screen")
+        or row.get("page")
+        or default_screen
+        or ""
+    ).strip()
+    category = str(row.get("구분") or row.get("type") or row.get("category") or "").strip()
+    action = str(
+        row.get("action")
+        or row.get("동작")
+        or row.get("테스트시나리오")
+        or row.get("scenario")
+        or row.get("test")
+        or row.get("description")
+        or ""
+    ).strip()
+    expected = str(row.get("expected") or row.get("기대결과") or row.get("확인") or row.get("check") or row.get("result") or "").strip()
+    actual = str(row.get("actual") or row.get("실제결과") or "").strip()
+    element = str(row.get("element") or row.get("요소") or row.get("target") or "").strip()
+
+    scenario = action
+    if expected and expected not in scenario:
+        scenario = f"{scenario} - {expected}" if scenario else expected
+
+    return {
+        # backward-compatible fields
+        "화면": module,
+        "구분": category,
+        "테스트시나리오": scenario,
+        "확인": actual or expected,
+        # granular fields
+        "module": module,
+        "element": element,
+        "action": action,
+        "expected": expected,
+        "actual": actual,
+    }
 
 
 def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = [
-        {"화면": screen, "구분": "퍼블리싱", "테스트시나리오": context or "UI 요소 렌더링 및 정렬 확인", "확인": ""},
-        {"화면": screen, "구분": "기능", "테스트시나리오": "주요 버튼/링크 동작 확인", "확인": ""},
-        {"화면": screen, "구분": "예외", "테스트시나리오": "필수값 누락/잘못된 입력 처리 확인", "확인": ""},
+        _normalize_row({"화면": screen, "구분": "퍼블리싱", "action": context or "UI 요소 렌더링 및 정렬 점검", "expected": "레이아웃 깨짐/겹침 없이 노출", "actual": ""}, default_screen=screen),
+        _normalize_row({"화면": screen, "구분": "기능", "action": "주요 버튼/링크를 클릭한다", "expected": "의도한 화면 또는 상태로 전환", "actual": ""}, default_screen=screen),
+        _normalize_row({"화면": screen, "구분": "예외", "action": "필수값을 비우거나 잘못된 입력으로 제출한다", "expected": "유효성 오류가 노출되고 제출 차단", "actual": ""}, default_screen=screen),
     ]
     if include_auth:
-        rows.append({"화면": screen, "구분": "권한", "테스트시나리오": "비로그인/권한없는 사용자 접근 차단 확인", "확인": ""})
+        rows.append(
+            _normalize_row({"화면": screen, "구분": "권한", "action": "비로그인/권한없는 사용자로 접근한다", "expected": "접근 차단 또는 로그인 유도", "actual": ""}, default_screen=screen)
+        )
     return rows
 
 
@@ -34,7 +81,7 @@ async def generate_checklist(
     system = (
         "당신은 QA 테스트 설계자다. 반드시 JSON만 반환한다. "
         "마크다운/설명 금지. 오직 JSON. "
-        "스키마: {\"rows\":[{\"화면\":string,\"구분\":string,\"테스트시나리오\":string,\"확인\":string}]}"
+        "스키마: {\"rows\":[{\"module\":string,\"element\":string,\"action\":string,\"expected\":string,\"actual\":string,\"구분\":string,\"화면\":string,\"테스트시나리오\":string,\"확인\":string}]}"
     )
     role_hint = "admin" if any(k in (screen + ' ' + context).lower() for k in ["admin", "cms", "관리", "권한"]) else "user"
     user = (
@@ -43,6 +90,7 @@ async def generate_checklist(
         f"권한체크 포함: {include_auth}\n"
         f"roleHint: {role_hint}\n"
         "실무용 체크리스트 10~14개를 생성해라. 정상/예외/경계/권한/회귀를 포함하고 중복 금지."
+        " 각 row는 module/element/action/expected/actual/구분 값을 채워라(actual은 빈문자열 허용)."
         " roleHint=admin 이면 발행/권한승격/감사로그 항목을 반드시 포함."
     )
 
@@ -69,25 +117,17 @@ async def generate_checklist(
         for r in raw_rows[:20]:
             if not isinstance(r, dict):
                 continue
-            # key alias normalization for small models
-            row = {
-                "화면": str(r.get("화면") or r.get("screen") or r.get("page") or "").strip(),
-                "구분": str(r.get("구분") or r.get("type") or r.get("category") or "").strip(),
-                "테스트시나리오": str(r.get("테스트시나리오") or r.get("scenario") or r.get("test") or r.get("description") or "").strip(),
-                "확인": str(r.get("확인") or r.get("check") or r.get("result") or "").strip(),
-            }
-            if not row["화면"]:
-                row["화면"] = screen
-            if row["구분"] and row["테스트시나리오"]:
+            row = _normalize_row(r, default_screen=screen)
+            if row["module"] and row["action"]:
                 rows.append(row)
 
     if len(rows) < 6:
         rows = _heuristic_rows(screen, context, include_auth)
         if "admin" in (screen + ' ' + context).lower() or "cms" in (screen + ' ' + context).lower() or "관리" in (screen + ' ' + context):
             rows.extend([
-                {"화면": screen, "구분": "권한", "테스트시나리오": "권한 없는 계정의 발행 버튼 접근 차단 확인", "확인": ""},
-                {"화면": screen, "구분": "기능", "테스트시나리오": "게시물 발행/비공개 전환 후 사용자 화면 반영 확인", "확인": ""},
-                {"화면": screen, "구분": "운영", "테스트시나리오": "감사로그(변경 이력) 기록 확인", "확인": ""},
+                _normalize_row({"화면": screen, "구분": "권한", "action": "권한 없는 계정으로 발행/권한승격 시도", "expected": "접근 차단 및 권한 오류 노출", "actual": ""}, default_screen=screen),
+                _normalize_row({"화면": screen, "구분": "기능", "action": "게시물 발행/비공개 전환을 수행", "expected": "사용자 화면 반영 상태가 일치", "actual": ""}, default_screen=screen),
+                _normalize_row({"화면": screen, "구분": "운영", "action": "게시물 상태를 변경한다", "expected": "감사로그(변경 이력)가 기록", "actual": ""}, default_screen=screen),
             ])
         return {
             "ok": True,

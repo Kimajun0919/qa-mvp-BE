@@ -42,12 +42,18 @@ def build_condition_matrix(screen: str, context: str = "", include_auth: bool = 
         for cond in CONDITIONS:
             if cond == "권한" and not include_auth:
                 continue
+            scenario = _scenario(role, cond, screen, surface)
             rows.append(
                 {
                     "화면": screen,
                     "구분": cond,
-                    "테스트시나리오": _scenario(role, cond, screen, surface),
+                    "테스트시나리오": scenario,
                     "확인": "",
+                    "module": screen,
+                    "element": "",
+                    "action": scenario,
+                    "expected": "요구사항대로 동작",
+                    "actual": "",
                 }
             )
 
@@ -55,9 +61,9 @@ def build_condition_matrix(screen: str, context: str = "", include_auth: bool = 
     if surface == "cms":
         rows.extend(
             [
-                {"화면": screen, "구분": "권한", "테스트시나리오": "editor 계정은 발행/권한승격 제한 정책 준수 확인", "확인": ""},
-                {"화면": screen, "구분": "회귀", "테스트시나리오": "관리자 변경사항이 사용자 화면에 의도대로 반영되는지 확인", "확인": ""},
-                {"화면": screen, "구분": "예외", "테스트시나리오": "발행 실패/충돌 상황에서 롤백 또는 재시도 동작 확인", "확인": ""},
+                {"화면": screen, "구분": "권한", "테스트시나리오": "editor 계정은 발행/권한승격 제한 정책 준수 확인", "확인": "", "module": screen, "element": "발행 버튼", "action": "editor로 발행/권한승격 시도", "expected": "정책에 따라 차단", "actual": ""},
+                {"화면": screen, "구분": "회귀", "테스트시나리오": "관리자 변경사항이 사용자 화면에 의도대로 반영되는지 확인", "확인": "", "module": screen, "element": "사용자 노출 영역", "action": "관리자 변경 후 사용자 화면 확인", "expected": "변경사항 반영", "actual": ""},
+                {"화면": screen, "구분": "예외", "테스트시나리오": "발행 실패/충돌 상황에서 롤백 또는 재시도 동작 확인", "확인": "", "module": screen, "element": "발행 플로우", "action": "충돌 상태에서 발행 시도", "expected": "롤백 또는 재시도 제공", "actual": ""},
             ]
         )
 
