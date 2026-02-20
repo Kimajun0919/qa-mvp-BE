@@ -245,6 +245,7 @@ Response fields
 - `rows`: array
 - `tsv`: string
 - `conditionMatrix`: object (`surface`, `roles`, `conditions`, `count`)
+- `missingAreas`: array (`AUTH|VALIDATION|INTERACTION|RESPONSIVE|PUBLISHING`) — 커버리지 기반 누락 힌트
 
 Row schema:
 ```json
@@ -497,7 +498,7 @@ Errors
 ### POST `/api/oneclick`
 Analyze → auto finalize → run in a single call.
 
-Request body:
+Request body (single):
 ```json
 {
   "baseUrl": "https://example.com",
@@ -506,27 +507,36 @@ Request body:
 }
 ```
 
+Request body (dual user/admin):
+```json
+{
+  "dualContext": {
+    "userBaseUrl": "https://user.example.com",
+    "adminBaseUrl": "https://admin.example.com",
+    "autoUserSignup": true,
+    "adminAuth": {"loginUrl":"https://admin.example.com/login","userId":"admin","password":"***"}
+  },
+  "llmProvider": "ollama",
+  "llmModel": "qwen2.5:0.5b"
+}
+```
+
 Required fields
-- `baseUrl`
+- single: `baseUrl`
+- dual: `dualContext.userBaseUrl`
 
 Response fields
 - `ok`: boolean
 - `oneClick`: true
-- `analysisId`: string
-- `runId`: string
-- `finalStatus`: string
-- `summary`: object
-- `judge`: object
-- `reportPath`: string
-- `reportJson`: string
-- `fixSheet`: object (`csv`, `xlsx`)
-- `discovered`: object
-- `plannerMode`: string
-- `plannerReason`: string
-- `analysisReports`: object
+- single mode: `analysisId`,`runId`,`finalStatus`,`summary`,`judge`,`reportPath`,`reportJson`,`fixSheet`,`discovered`,`plannerMode`,`plannerReason`,`analysisReports`
+- dual mode:
+  - `oneClickDual`: true
+  - `user`, `admin`: single 결과 구조
+  - `userPhase[]`, `adminPhase[]`, `bridgePhase[]`: 단계별 상태 요약
+  - `finalStatus`, `summary`, `analysisReports`
 
 Errors
-- `400`: `baseUrl required`
+- `400`: `baseUrl required` 또는 `dualContext.userBaseUrl required`
 - `500`: oneclick failure
 
 ---

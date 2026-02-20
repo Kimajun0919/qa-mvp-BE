@@ -273,6 +273,21 @@ async def checklist(req: Request) -> Dict[str, Any]:
         "conditions": matrix.get("conditions"),
         "count": len(matrix.get("rows") or []),
     }
+
+    # coverage-driven missing area hints
+    text_all = "\n".join([str(x.get("테스트시나리오") or "") for x in out.get("rows") or []]).lower()
+    checks = {
+        "AUTH": ["권한", "로그인", "비로그인", "접근"],
+        "VALIDATION": ["유효성", "필수", "입력", "에러"],
+        "INTERACTION": ["클릭", "버튼", "링크", "이동"],
+        "RESPONSIVE": ["반응형", "모바일", "해상도"],
+        "PUBLISHING": ["레이아웃", "퍼블리싱", "정렬", "간격"],
+    }
+    missing = []
+    for k, kws in checks.items():
+        if not any(w in text_all for w in kws):
+            missing.append(k)
+    out["missingAreas"] = missing
     return out
 
 
@@ -532,6 +547,21 @@ async def oneclick(req: Request) -> Dict[str, Any]:
         if not admin_res.get("ok"):
             raise HTTPException(status_code=int(admin_res.get("status") or 500), detail={"ok": False, "error": f"admin flow failed: {admin_res.get('error')}"})
 
+        user_phase = [
+            {"name": "user.analyze+run", "status": "PASS" if user_res.get("ok") else "FAIL", "analysisId": user_res.get("analysisId"), "runId": user_res.get("runId")},
+            {"name": "user.signupAttempt", "status": "PASS" if auto_user_signup else "SKIPPED", "note": "captcha/email verification sites may be blocked"},
+        ]
+        admin_phase = [
+            {"name": "admin.analyze+run", "status": "PASS" if admin_res.get("ok") else "FAIL", "analysisId": admin_res.get("analysisId"), "runId": admin_res.get("runId")},
+        ]
+        bridge_phase = [
+            {
+                "name": "bridge.user-admin-consistency",
+                "status": "PASS" if (user_res.get("finalStatus") == "PASS" and admin_res.get("finalStatus") == "PASS") else "WARN",
+                "note": "admin 처리 후 user 상태 반영은 transition-check/template에서 검증 권장",
+            }
+        ]
+
         return {
             "ok": True,
             "oneClick": True,
@@ -543,6 +573,9 @@ async def oneclick(req: Request) -> Dict[str, Any]:
             },
             "user": user_res,
             "admin": admin_res,
+            "userPhase": user_phase,
+            "adminPhase": admin_phase,
+            "bridgePhase": bridge_phase,
             "finalStatus": "PASS" if (user_res.get("finalStatus") == "PASS" and admin_res.get("finalStatus") == "PASS") else "PASS_WITH_WARNINGS",
             "summary": {"user": user_res.get("summary"), "admin": admin_res.get("summary")},
             "analysisReports": {"user": user_res.get("analysisReports", {}), "admin": admin_res.get("analysisReports", {})},
