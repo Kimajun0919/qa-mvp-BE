@@ -434,6 +434,9 @@ async def checklist(req: Request) -> Dict[str, Any]:
     context = str(payload.get("context", "")).strip()
     include_auth = bool(payload.get("includeAuth", False))
     provider, model, llm_auth = _resolve_llm(payload)
+    checklist_expand = bool(payload.get("checklistExpand", False))
+    checklist_expand_mode = str(payload.get("checklistExpandMode", "none") or "none").strip()
+    checklist_expand_limit = int(payload.get("checklistExpandLimit", 40) or 40)
 
     # Native FastAPI implementation + condition matrix expansion
     out = await generate_checklist(
@@ -443,6 +446,9 @@ async def checklist(req: Request) -> Dict[str, Any]:
         provider=provider,
         model=model,
         llm_auth=llm_auth,
+        expand=checklist_expand,
+        expand_mode=checklist_expand_mode,
+        max_rows=max(6, min(checklist_expand_limit, 300)),
     )
     matrix = build_condition_matrix(screen, context=context, include_auth=include_auth)
 
@@ -458,7 +464,8 @@ async def checklist(req: Request) -> Dict[str, Any]:
         seen.add(k)
         merged.append(r)
 
-    out["rows"] = merged[:40]
+    response_limit = max(40, checklist_expand_limit) if checklist_expand else 40
+    out["rows"] = merged[:response_limit]
     cols = out.get("columns") or ["화면", "구분", "테스트시나리오", "확인", "module", "element", "action", "expected", "actual"]
     out["tsv"] = "\n".join([
         "\t".join(cols),
@@ -704,6 +711,9 @@ async def checklist_auto(req: Request) -> Dict[str, Any]:
     auth_payload = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
     auth_bundle = bundle.get("auth") if isinstance(bundle.get("auth"), dict) else {}
     auth = {**auth_bundle, **auth_payload}
+    checklist_expand = bool(payload.get("checklistExpand", False))
+    checklist_expand_mode = str(payload.get("checklistExpandMode", "none") or "none").strip()
+    checklist_expand_limit = int(payload.get("checklistExpandLimit", 20) or 20)
 
     out = await auto_checklist_from_sitemap(
         bundle,
@@ -713,6 +723,9 @@ async def checklist_auto(req: Request) -> Dict[str, Any]:
         max_pages=max_pages,
         source=source,
         auth=auth,
+        checklist_expand=checklist_expand,
+        checklist_expand_mode=checklist_expand_mode,
+        checklist_expand_limit=checklist_expand_limit,
     )
     try:
         run_id = f"auto_{analysis_id}_{int(time.time())}"

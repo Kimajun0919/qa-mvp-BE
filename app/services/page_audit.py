@@ -99,6 +99,9 @@ async def auto_checklist_from_sitemap(
     max_pages: Optional[int] = None,
     source: str = "sitemap",
     auth: Dict[str, Any] | None = None,
+    checklist_expand: bool = False,
+    checklist_expand_mode: str = "none",
+    checklist_expand_limit: int = 20,
 ) -> Dict[str, Any]:
     analysis = bundle.get("analysis") or {}
     base_url = str(analysis.get("baseUrl") or "").rstrip("/")
@@ -158,6 +161,9 @@ async def auto_checklist_from_sitemap(
             include_auth=include_auth,
             provider=provider,
             model=model,
+            expand=checklist_expand,
+            expand_mode=checklist_expand_mode,
+            max_rows=max(6, min(checklist_expand_limit, 300)),
         )
         rows = chk.get("rows") or []
 

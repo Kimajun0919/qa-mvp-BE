@@ -255,6 +255,9 @@ Request body:
   "screen": "로그인 화면",
   "context": "E2E smoke",
   "includeAuth": true,
+  "checklistExpand": true,
+  "checklistExpandMode": "all",
+  "checklistExpandLimit": 80,
   "llmProvider": "ollama",
   "llmModel": "qwen2.5:0.5b"
 }
@@ -262,6 +265,11 @@ Request body:
 
 Required fields
 - `screen`
+
+Optional expansion controls
+- `checklistExpand`: boolean (default `false`)
+- `checklistExpandMode`: `none|all|field|action|assertion` (comma-separated 조합 허용)
+- `checklistExpandLimit`: number (default 40, max 300)
 
 Response fields
 - `ok`: boolean
@@ -272,6 +280,7 @@ Response fields
   - 세분화: `module`,`element`,`action`,`expected`,`actual`
 - `rows`: array
 - `tsv`: string
+- `expansion`: object (`enabled`, `modes`)
 - `conditionMatrix`: object (`surface`, `roles`, `conditions`, `count`)
 - `missingAreas`: array (`AUTH|VALIDATION|INTERACTION|RESPONSIVE|PUBLISHING`) — 커버리지 기반 누락 힌트
 
@@ -309,6 +318,9 @@ Request body:
   "includeAuth": true,
   "source": "sitemap",
   "maxPages": 20,
+  "checklistExpand": true,
+  "checklistExpandMode": "field,assertion",
+  "checklistExpandLimit": 30,
   "auth": {
     "loginUrl": "https://example.com/login",
     "userId": "tester@example.com",
@@ -325,6 +337,7 @@ Required fields
 Notes
 - `source`: `sitemap|menu` (기본 `sitemap`)
 - `auth`: 로그인 입력값 (`loginUrl`, `userId`, `password`)
+- `checklistExpand` / `checklistExpandMode` / `checklistExpandLimit`: 페이지별 세분화 행 확장 제어
 - `maxPages` 생략 시 선택된 source의 전체 URL 대상으로 실행
 - 안전 상한: `QA_AUTO_MAX_PAGES` (기본 30)
 

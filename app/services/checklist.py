@@ -1,10 +1,12 @@
-from typing import Any, Dict, List, Optional
+from itertools import product
+from typing import Any, Dict, List, Optional, Set
 
 from .llm import chat_json, parse_json_text
 
 BASE_COLUMNS = ["화면", "구분", "테스트시나리오", "확인"]
 GRANULAR_COLUMNS = ["module", "element", "action", "expected", "actual"]
 COLUMNS = BASE_COLUMNS + GRANULAR_COLUMNS
+EXPANSION_KEYS = {"field", "action", "assertion"}
 
 
 def _normalize_row(row: Dict[str, Any], *, default_screen: str = "") -> Dict[str, str]:
@@ -50,6 +52,85 @@ def _normalize_row(row: Dict[str, Any], *, default_screen: str = "") -> Dict[str
     }
 
 
+def _split_parts(text: str, delimiters: List[str], max_parts: int = 4) -> List[str]:
+    out = [str(text or "").strip()]
+    for d in delimiters:
+        next_out: List[str] = []
+        for item in out:
+            if d in item:
+                next_out.extend([p.strip() for p in item.split(d)])
+            else:
+                next_out.append(item)
+        out = next_out
+    dedup: List[str] = []
+    seen = set()
+    for item in out:
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        dedup.append(item)
+        if len(dedup) >= max_parts:
+            break
+    return dedup or [str(text or "").strip()]
+
+
+def _resolve_expansion(expand: bool = False, mode: str = "none") -> Set[str]:
+    m = (mode or "none").strip().lower()
+    if m in ("none", "off", "false", "0"):
+        return set()
+    if m == "all":
+        return set(EXPANSION_KEYS)
+    keys = {x.strip() for x in m.split(",") if x.strip()}
+    keys = {"field" if k == "element" else k for k in keys}
+    keys = keys.intersection(EXPANSION_KEYS)
+    if keys:
+        return keys
+    return set(EXPANSION_KEYS) if expand else set()
+
+
+def _expand_rows(rows: List[Dict[str, str]], expansion: Set[str], max_rows: int) -> List[Dict[str, str]]:
+    if not expansion:
+        return rows[:max_rows]
+
+    expanded: List[Dict[str, str]] = []
+    seen = set()
+
+    for row in rows:
+        elements = [row.get("element", "")]
+        actions = [row.get("action", "")]
+        assertions = [row.get("expected", "")]
+
+        if "field" in expansion:
+            elements = _split_parts(elements[0], [",", "/", "|", " 및 ", " 와 ", " + "])
+        if "action" in expansion:
+            actions = _split_parts(actions[0], [";", "->", " 후 ", " 그리고 ", " 및 "])
+        if "assertion" in expansion:
+            assertions = _split_parts(assertions[0], [";", " 그리고 ", " 및 ", " / "])
+
+        for element, action, expected in product(elements, actions, assertions):
+            candidate = _normalize_row(
+                {
+                    **row,
+                    "module": row.get("module", ""),
+                    "구분": row.get("구분", ""),
+                    "element": element,
+                    "action": action,
+                    "expected": expected,
+                    "actual": row.get("actual", ""),
+                },
+                default_screen=row.get("module", ""),
+            )
+            key = f"{candidate.get('module','')}::{candidate.get('element','')}::{candidate.get('action','')}::{candidate.get('expected','')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            expanded.append(candidate)
+            if len(expanded) >= max_rows:
+                return expanded
+
+    return expanded
+
+
 def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = [
         _normalize_row({"화면": screen, "구분": "퍼블리싱", "action": context or "UI 요소 렌더링 및 정렬 점검", "expected": "레이아웃 깨짐/겹침 없이 노출", "actual": ""}, default_screen=screen),
@@ -77,6 +158,9 @@ async def generate_checklist(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     llm_auth: Optional[Dict[str, Any]] = None,
+    expand: bool = False,
+    expand_mode: str = "none",
+    max_rows: int = 20,
 ) -> Dict[str, Any]:
     system = (
         "당신은 QA 테스트 설계자다. 반드시 JSON만 반환한다. "
@@ -94,9 +178,12 @@ async def generate_checklist(
         " roleHint=admin 이면 발행/권한승격/감사로그 항목을 반드시 포함."
     )
 
+    expansion = _resolve_expansion(expand=expand, mode=expand_mode)
+    raw_limit = max(6, min(int(max_rows or 20), 300))
+
     ok, content_or_err, used_provider, used_model = await chat_json(system, user, provider=provider, model=model, llm_auth=llm_auth)
     if not ok:
-        rows = _heuristic_rows(screen, context, include_auth)
+        rows = _expand_rows(_heuristic_rows(screen, context, include_auth), expansion, raw_limit)
         return {
             "ok": True,
             "mode": "heuristic",
@@ -106,6 +193,7 @@ async def generate_checklist(
             "tsv": _rows_to_tsv(rows),
             "provider": used_provider,
             "model": used_model,
+            "expansion": {"enabled": bool(expansion), "modes": sorted(list(expansion))},
         }
 
     data = parse_json_text(content_or_err)
@@ -114,7 +202,7 @@ async def generate_checklist(
         raw_rows = data.get("rows") or data.get("items") or data.get("checklist")
     rows: List[Dict[str, str]] = []
     if isinstance(raw_rows, list):
-        for r in raw_rows[:20]:
+        for r in raw_rows[:40]:
             if not isinstance(r, dict):
                 continue
             row = _normalize_row(r, default_screen=screen)
@@ -129,6 +217,7 @@ async def generate_checklist(
                 _normalize_row({"화면": screen, "구분": "기능", "action": "게시물 발행/비공개 전환을 수행", "expected": "사용자 화면 반영 상태가 일치", "actual": ""}, default_screen=screen),
                 _normalize_row({"화면": screen, "구분": "운영", "action": "게시물 상태를 변경한다", "expected": "감사로그(변경 이력)가 기록", "actual": ""}, default_screen=screen),
             ])
+        rows = _expand_rows(rows, expansion, raw_limit)
         return {
             "ok": True,
             "mode": "heuristic",
@@ -138,8 +227,10 @@ async def generate_checklist(
             "tsv": _rows_to_tsv(rows),
             "provider": used_provider,
             "model": used_model,
+            "expansion": {"enabled": bool(expansion), "modes": sorted(list(expansion))},
         }
 
+    rows = _expand_rows(rows, expansion, raw_limit)
     return {
         "ok": True,
         "mode": "llm",
@@ -149,4 +240,5 @@ async def generate_checklist(
         "tsv": _rows_to_tsv(rows),
         "provider": used_provider,
         "model": used_model,
+        "expansion": {"enabled": bool(expansion), "modes": sorted(list(expansion))},
     }
