@@ -184,6 +184,116 @@ def _priority_score(path: str, role: str) -> int:
     return min(score, 100)
 
 
+def _infer_candidate_flows(
+    pages: List[PageInfo],
+    menu_rows: List[Dict[str, Any]],
+    service_type: str,
+    auth_likely: bool,
+    form_type_counts: Dict[str, int],
+) -> List[Dict[str, Any]]:
+    path_tokens: set[str] = set()
+    for p in pages:
+        lp = (p.path or "").lower()
+        if lp:
+            path_tokens.add(lp)
+    for m in menu_rows:
+        href = str(m.get("href") or "").lower()
+        if href:
+            path_tokens.add(href)
+
+    def _has_any(*keys: str) -> bool:
+        return any(any(k in token for k in keys) for token in path_tokens)
+
+    inferred: List[Dict[str, Any]] = [
+        {
+            "name": "Landing Navigation",
+            "platformType": "LANDING",
+            "confidence": 0.72,
+            "status": "PROPOSED",
+        },
+        {
+            "name": "Core CTA Journey",
+            "platformType": service_type,
+            "confidence": 0.74,
+            "status": "PROPOSED",
+        },
+    ]
+
+    if _has_any("/docs", "/doc", "/guide", "/tutorial", "/reference", "/api"):
+        inferred.append(
+            {
+                "name": "Documentation Discovery",
+                "platformType": "LANDING",
+                "confidence": 0.78,
+                "status": "PROPOSED",
+            }
+        )
+
+    if form_type_counts.get("SEARCH", 0) > 0 or _has_any("/search"):
+        inferred.append(
+            {
+                "name": "Search & Result Navigation",
+                "platformType": "LANDING",
+                "confidence": 0.76,
+                "status": "PROPOSED",
+            }
+        )
+
+    if _has_any("/download", "/releases", "/install"):
+        inferred.append(
+            {
+                "name": "Download/Install Journey",
+                "platformType": "LANDING",
+                "confidence": 0.75,
+                "status": "PROPOSED",
+            }
+        )
+
+    if _has_any("/community", "/support", "/help", "/about", "/discuss"):
+        inferred.append(
+            {
+                "name": "Community/Support Discovery",
+                "platformType": "LANDING",
+                "confidence": 0.71,
+                "status": "PROPOSED",
+            }
+        )
+
+    if auth_likely:
+        inferred.append(
+            {
+                "name": "Auth/Guard Access",
+                "platformType": "LOGIN",
+                "confidence": 0.68,
+                "status": "PROPOSED",
+            }
+        )
+
+    if form_type_counts.get("CHECKOUT", 0) > 0 or _has_any("/checkout", "/cart", "/order"):
+        inferred.append(
+            {
+                "name": "Checkout/Order Flow",
+                "platformType": "CHECKOUT",
+                "confidence": 0.72,
+                "status": "PROPOSED",
+            }
+        )
+
+    # stable de-dup and hard cap to keep API payload compact
+    deduped: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for c in inferred:
+        k = (str(c.get("name") or "").strip().lower(), str(c.get("platformType") or "").strip().upper())
+        if not k[0]:
+            continue
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(c)
+
+    return deduped[:6]
+
+
 def _write_analysis_reports(analysis_id: str, pages: List[PageInfo], menu_rows: List[Dict[str, Any]], metrics: Dict[str, Any]) -> Dict[str, str]:
     out_dir = Path("out/report")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -397,6 +507,8 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
     planner_mode = "llm" if ok else "heuristic"
     planner_reason = "" if ok else content_or_err
 
+    inferred_candidates = _infer_candidate_flows(pages, menu_rows, service_type, auth_likely, form_type_counts)
+
     candidates: List[Dict[str, Any]] = []
     if ok:
         data = parse_json_text(content_or_err)
@@ -410,7 +522,6 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
                 conf = float(c.get("confidence") or 0.7)
                 candidates.append(
                     {
-                        "id": f"cand_py_{int(time.time())}_{i}",
                         "name": name,
                         "platformType": ptype,
                         "confidence": max(0.0, min(conf, 1.0)),
@@ -418,14 +529,39 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
                     }
                 )
 
-    if not candidates:
-        candidates = [
-            {"id": "cand_py_0", "name": "Landing Navigation", "platformType": "LANDING", "confidence": 0.7, "status": "PROPOSED"},
-            {"id": "cand_py_1", "name": "Core CTA Journey", "platformType": service_type, "confidence": 0.72, "status": "PROPOSED"},
-            {"id": "cand_py_2", "name": "Auth/Guard Access", "platformType": "LOGIN" if auth_likely else service_type, "confidence": 0.68, "status": "PROPOSED"},
-        ]
+    # Node-path parity: keep LLM candidates, then top-up with extracted route/signal candidates.
+    merged: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in (candidates, inferred_candidates):
+        for c in source:
+            key = (
+                str(c.get("name") or "").strip().lower(),
+                str(c.get("platformType") or service_type).strip().upper(),
+            )
+            if not key[0] or key in seen:
+                continue
+            seen.add(key)
+            merged.append(
+                {
+                    "name": str(c.get("name") or "Flow").strip(),
+                    "platformType": str(c.get("platformType") or service_type).strip().upper(),
+                    "confidence": max(0.0, min(float(c.get("confidence") or 0.7), 1.0)),
+                    "status": "PROPOSED",
+                }
+            )
+
+    if not merged:
+        merged = inferred_candidates
         planner_mode = "heuristic"
         planner_reason = planner_reason or "llm parse fallback"
+
+    candidates = [
+        {
+            "id": f"cand_py_{int(time.time())}_{i}",
+            **c,
+        }
+        for i, c in enumerate(merged[:6])
+    ]
 
     analysis_id = f"py_analysis_{int(time.time() * 1000)}"
     reports = _write_analysis_reports(analysis_id, pages, menu_rows, metrics)
