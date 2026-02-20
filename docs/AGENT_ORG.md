@@ -8,6 +8,7 @@ This repo is owned by BE Agent under Orchestrator control.
 - evidence/failure-code standardization
 - async job orchestration (queue/poll/progress)
 - final test sheet correctness (csv/xlsx)
+- planning sync: enforce PRD_LIVE/acceptance criteria linkage on backend changes
 
 ## BE Hard Rules
 - No API breaking change without API_SPEC update.
