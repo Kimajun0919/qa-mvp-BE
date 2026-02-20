@@ -266,6 +266,7 @@ async def run_flows(
     analysis_id: str,
     provider: str | None = None,
     model: str | None = None,
+    llm_auth: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     item = store.get(analysis_id)
     if not item:
@@ -308,6 +309,7 @@ async def run_flows(
             f"summary={summary}\nissues={all_issues[:5]}",
             provider=provider,
             model=model,
+            llm_auth=llm_auth,
         )
         if ok:
             d = parse_json_text(content)

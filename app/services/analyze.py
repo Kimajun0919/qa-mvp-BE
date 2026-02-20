@@ -245,7 +245,7 @@ def _write_analysis_reports(analysis_id: str, pages: List[PageInfo], menu_rows: 
     }
 
 
-async def analyze_site(base_url: str, provider: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
+async def analyze_site(base_url: str, provider: Optional[str] = None, model: Optional[str] = None, llm_auth: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     target = base_url.strip()
     verify_tls = os.getenv("QA_HTTP_VERIFY_TLS", "false").lower() in {"1", "true", "yes", "on"}
     max_pages = int(os.getenv("QA_ANALYZE_MAX_PAGES", "20"))
@@ -393,7 +393,7 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
     sys = "You are QA planner. Return JSON only: {\"candidates\":[{\"name\":string,\"platformType\":string,\"confidence\":number,\"status\":\"PROPOSED\"}]}"
     usr = f"url={target}\nserviceType={service_type}\nauthLikely={auth_likely}\npaths={','.join(p.path for p in pages[:10])}\nGenerate 3 QA flow candidates."
 
-    ok, content_or_err, used_provider, used_model = await chat_json(sys, usr, provider=provider, model=model)
+    ok, content_or_err, used_provider, used_model = await chat_json(sys, usr, provider=provider, model=model, llm_auth=llm_auth)
     planner_mode = "llm" if ok else "heuristic"
     planner_reason = "" if ok else content_or_err
 

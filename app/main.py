@@ -51,6 +51,23 @@ app.add_middleware(
 )
 
 
+def _resolve_llm(payload: Dict[str, Any]) -> tuple[Any, Any, Dict[str, Any]]:
+    provider = payload.get("llmProvider")
+    model = (str(payload.get("llmModel", "")).strip() or None)
+    llm_auth = payload.get("llmAuth") if isinstance(payload.get("llmAuth"), dict) else {}
+    providers = payload.get("llmProviders") if isinstance(payload.get("llmProviders"), list) else []
+    routing = payload.get("llmRouting") if isinstance(payload.get("llmRouting"), dict) else {}
+    r_providers = routing.get("providers") if isinstance(routing.get("providers"), list) else []
+    if r_providers:
+        provider = ",".join([str(x).strip() for x in r_providers if str(x).strip()])
+    elif providers:
+        provider = ",".join([str(x).strip() for x in providers if str(x).strip()])
+    r_auth = routing.get("auth") if isinstance(routing.get("auth"), dict) else {}
+    if r_auth:
+        llm_auth = {**llm_auth, **r_auth}
+    return provider, model, llm_auth
+
+
 def _save_native_bundle(analysis_id: str, base_url: str, pages: list[dict[str, Any]], elements: list[dict[str, Any]], candidates: list[dict[str, Any]], reports: Dict[str, Any] | None = None, auth: Dict[str, Any] | None = None) -> None:
     bundle = {
         "analysis": {"analysisId": analysis_id, "baseUrl": base_url},
@@ -150,11 +167,10 @@ async def analyze(req: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "baseUrl required"})
 
     # Native FastAPI implementation (phase-2 migration target)
-    provider = payload.get("llmProvider")
-    model = (str(payload.get("llmModel", "")).strip() or None)
+    provider, model, llm_auth = _resolve_llm(payload)
     auth = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
     try:
-        result = await analyze_site(base_url, provider=provider, model=model)
+        result = await analyze_site(base_url, provider=provider, model=model, llm_auth=llm_auth)
         analysis_id = str(result.get("analysisId") or f"py_analysis_{int(time.time() * 1000)}")
         native_pages = result.get("_native", {}).get("pages") or [result.get("_native", {}).get("page", {})]
         _save_native_bundle(
@@ -239,8 +255,7 @@ async def checklist(req: Request) -> Dict[str, Any]:
 
     context = str(payload.get("context", "")).strip()
     include_auth = bool(payload.get("includeAuth", False))
-    provider = payload.get("llmProvider")
-    model = (str(payload.get("llmModel", "")).strip() or None)
+    provider, model, llm_auth = _resolve_llm(payload)
 
     # Native FastAPI implementation + condition matrix expansion
     out = await generate_checklist(
@@ -249,6 +264,7 @@ async def checklist(req: Request) -> Dict[str, Any]:
         include_auth,
         provider=provider,
         model=model,
+        llm_auth=llm_auth,
     )
     matrix = build_condition_matrix(screen, context=context, include_auth=include_auth)
 
@@ -421,8 +437,7 @@ async def checklist_auto(req: Request) -> Dict[str, Any]:
     if not bundle:
         raise HTTPException(status_code=404, detail={"ok": False, "error": "analysis not found"})
 
-    provider = payload.get("llmProvider")
-    model = (str(payload.get("llmModel", "")).strip() or None)
+    provider, model, _ = _resolve_llm(payload)
     include_auth = bool(payload.get("includeAuth", True))
     max_pages_raw = payload.get("maxPages", None)
     max_pages = int(max_pages_raw) if str(max_pages_raw or "").strip() else None
@@ -452,8 +467,8 @@ async def checklist_auto(req: Request) -> Dict[str, Any]:
     return out
 
 
-async def _run_oneclick_single(base_url: str, provider: Any = None, model: str | None = None, auth: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    analyzed = await analyze_site(base_url, provider=provider, model=model)
+async def _run_oneclick_single(base_url: str, provider: Any = None, model: str | None = None, auth: Dict[str, Any] | None = None, llm_auth: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    analyzed = await analyze_site(base_url, provider=provider, model=model, llm_auth=llm_auth)
     analysis_id = str(analyzed.get("analysisId") or f"py_analysis_{int(time.time() * 1000)}")
     native_pages = analyzed.get("_native", {}).get("pages") or [analyzed.get("_native", {}).get("page", {})]
     _save_native_bundle(
@@ -497,7 +512,7 @@ async def _run_oneclick_single(base_url: str, provider: Any = None, model: str |
         return {"ok": False, "error": finalized.get("error") or "finalize failed", "status": 500}
     save_flows(analysis_id, auto_flows)
 
-    ran = await run_flows(native_analysis_store, analysis_id, provider=provider, model=model)
+    ran = await run_flows(native_analysis_store, analysis_id, provider=provider, model=model, llm_auth=llm_auth)
     if not ran.get("ok"):
         return {"ok": False, "error": ran.get("error"), "status": int(ran.get("status") or 500)}
 
@@ -527,8 +542,7 @@ async def _run_oneclick_single(base_url: str, provider: Any = None, model: str |
 @app.post("/api/oneclick")
 async def oneclick(req: Request) -> Dict[str, Any]:
     payload = await req.json()
-    provider = payload.get("llmProvider")
-    model = (str(payload.get("llmModel", "")).strip() or None)
+    provider, model, llm_auth = _resolve_llm(payload)
 
     dual = payload.get("dualContext") if isinstance(payload.get("dualContext"), dict) else {}
     if dual:
@@ -539,11 +553,11 @@ async def oneclick(req: Request) -> Dict[str, Any]:
         if not user_base:
             raise HTTPException(status_code=400, detail={"ok": False, "error": "dualContext.userBaseUrl required"})
 
-        user_res = await _run_oneclick_single(user_base, provider=provider, model=model, auth={})
+        user_res = await _run_oneclick_single(user_base, provider=provider, model=model, auth={}, llm_auth=llm_auth)
         if not user_res.get("ok"):
             raise HTTPException(status_code=int(user_res.get("status") or 500), detail={"ok": False, "error": f"user flow failed: {user_res.get('error')}"})
 
-        admin_res = await _run_oneclick_single(admin_base, provider=provider, model=model, auth=admin_auth)
+        admin_res = await _run_oneclick_single(admin_base, provider=provider, model=model, auth=admin_auth, llm_auth=llm_auth)
         if not admin_res.get("ok"):
             raise HTTPException(status_code=int(admin_res.get("status") or 500), detail={"ok": False, "error": f"admin flow failed: {admin_res.get('error')}"})
 
@@ -585,7 +599,7 @@ async def oneclick(req: Request) -> Dict[str, Any]:
     if not base_url:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "baseUrl required"})
     auth = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
-    single = await _run_oneclick_single(base_url, provider=provider, model=model, auth=auth)
+    single = await _run_oneclick_single(base_url, provider=provider, model=model, auth=auth, llm_auth=llm_auth)
     if not single.get("ok"):
         raise HTTPException(status_code=int(single.get("status") or 500), detail={"ok": False, "error": single.get("error")})
     return {"ok": True, "oneClick": True, **single}
@@ -617,10 +631,9 @@ async def flows_run(req: Request) -> Dict[str, Any]:
     if not analysis_id:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "analysisId required"})
 
-    provider = payload.get("llmProvider")
-    model = (str(payload.get("llmModel", "")).strip() or None)
+    provider, model, llm_auth = _resolve_llm(payload)
     _load_bundle(analysis_id)
-    r = await run_flows(native_analysis_store, analysis_id, provider=provider, model=model)
+    r = await run_flows(native_analysis_store, analysis_id, provider=provider, model=model, llm_auth=llm_auth)
     if not r.get("ok"):
         code = int(r.get("status") or 400)
         raise HTTPException(status_code=code, detail={"ok": False, "error": r.get("error")})

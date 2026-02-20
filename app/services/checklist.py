@@ -29,6 +29,7 @@ async def generate_checklist(
     *,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    llm_auth: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     system = (
         "당신은 QA 테스트 설계자다. 반드시 JSON만 반환한다. "
@@ -45,7 +46,7 @@ async def generate_checklist(
         " roleHint=admin 이면 발행/권한승격/감사로그 항목을 반드시 포함."
     )
 
-    ok, content_or_err, used_provider, used_model = await chat_json(system, user, provider=provider, model=model)
+    ok, content_or_err, used_provider, used_model = await chat_json(system, user, provider=provider, model=model, llm_auth=llm_auth)
     if not ok:
         rows = _heuristic_rows(screen, context, include_auth)
         return {

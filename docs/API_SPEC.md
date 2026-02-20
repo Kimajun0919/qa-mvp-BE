@@ -9,8 +9,18 @@ Content-Type
 - Response: `application/json`
 
 LLM options (common)
-- `llmProvider`: `"openai" | "ollama"` (optional)
+- `llmProvider`: `"openai" | "ollama"` 또는 `"openai,ollama"` 같은 우선순위 체인 (optional)
+- `llmProviders`: provider 배열 우선순위 (optional)
 - `llmModel`: string (optional)
+- `llmRouting`: object (optional)
+  - `providers`: string[] (예: `["openai","ollama"]`)
+  - `auth.openai.mode`: `env|apiKey|oauthToken`
+  - `auth.openai.apiKey` 또는 `auth.openai.oauthToken`
+- `llmAuth`: provider auth map (optional, `llmRouting.auth`와 동일 용도)
+
+참고
+- OpenAI 인증은 `OPENAI_API_KEY`(env) 또는 요청 바디의 `apiKey/oauthToken`으로 사용 가능
+- provider 체인을 주면 순서대로 시도하고, 실패 시 다음 provider로 fallback
 
 ---
 
