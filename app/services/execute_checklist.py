@@ -58,8 +58,12 @@ def _failure_code(status: str, reason: str) -> str:
         return "ASSERT_VALIDATION_MISSING"
     if "권한/로그인 차단 신호 미확인" in reason:
         return "ASSERT_AUTH_GUARD_MISSING"
-    if "레이아웃 오버플로우" in reason:
+    if "레이아웃 오버플로우" in reason or "레이아웃 깨짐" in reason:
         return "ASSERT_LAYOUT_OVERFLOW"
+    if "모바일 가로 스크롤/레이아웃 깨짐 가능성" in reason:
+        return "ASSERT_RESPONSIVE_OVERFLOW"
+    if "인터랙션 표면 부족" in reason:
+        return "ASSERT_INTERACTION_SURFACE_LOW"
     return "ASSERT_UNKNOWN"
 
 
@@ -78,6 +82,8 @@ def _remediation_hint(code: str) -> str:
         "ASSERT_VALIDATION_MISSING": "유효성 에러 노출이 없습니다. required/invalid 처리 및 에러 메시지 렌더를 구현하세요.",
         "ASSERT_AUTH_GUARD_MISSING": "비로그인 차단 신호가 없습니다. 인증 가드/리다이렉트/403 처리를 점검하세요.",
         "ASSERT_LAYOUT_OVERFLOW": "레이아웃 overflow가 감지되었습니다. 고정폭 요소와 반응형 브레이크포인트를 조정하세요.",
+        "ASSERT_RESPONSIVE_OVERFLOW": "모바일 뷰포트에서 가로 스크롤/레이아웃 깨짐이 의심됩니다. 360~430px 구간에서 min-width·fixed 폭·table 래핑을 점검하세요.",
+        "ASSERT_INTERACTION_SURFACE_LOW": "클릭 가능한 상호작용 요소 수가 부족합니다. 핵심 CTA/링크/버튼 노출 여부와 disabled/visibility 조건을 점검하세요.",
         "ASSERT_UNKNOWN": "원인 미분류 실패입니다. 증거메타와 스크린샷 기준으로 재현 후 실패코드 매핑을 확장하세요.",
     }
     return hints.get(code, hints["ASSERT_UNKNOWN"])

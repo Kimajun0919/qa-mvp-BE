@@ -389,7 +389,7 @@ Response fields
 - `failureCodeHints`: object (실패코드별 대응 가이드 매핑, 예: `{ "HTTP_ERROR": "..." }`)
 - `rows`: executed rows (`실행결과`,`증거`,`증거메타`,`실패사유`,`실패코드`,`실패대응가이드`,`remediationHint`,`실행메타`,`요소통계` 포함)
   - `실행메타.scenarioKind`: `AUTH|VALIDATION|INTERACTION|RESPONSIVE|PUBLISHING|SMOKE`
-  - `실패코드` 예시: `HTTP_ERROR`,`SELECTOR_NOT_FOUND`,`ASSERT_NO_STATE_CHANGE`,`ASSERT_VALIDATION_MISSING`,`BLOCKED_TIMEOUT`
+  - `실패코드` 예시: `HTTP_ERROR`,`SELECTOR_NOT_FOUND`,`ASSERT_NO_STATE_CHANGE`,`ASSERT_VALIDATION_MISSING`,`ASSERT_RESPONSIVE_OVERFLOW`,`ASSERT_INTERACTION_SURFACE_LOW`,`BLOCKED_TIMEOUT`
   - `실패대응가이드`/`remediationHint`: 해당 `실패코드`의 권장 조치 문구
   - `증거메타`: `screenshotPath`,`observedUrl`,`title`,`httpStatus`,`scenarioKind`,`timestamp`
 - `finalSheet`: object (`csv`,`xlsx`)
@@ -413,6 +413,30 @@ Response fields
 - `status`: `queued|running|done|error`
 - `summary`,`coverage`,`failureCodeHints`,`rows`,`finalSheet` (status=done 시)
 - `error` (status=error 시)
+
+#### Async execute smoke snippet (unit-like)
+```bash
+BASE="http://127.0.0.1:8000"
+JOB_ID=$(curl -sS -X POST "$BASE/api/checklist/execute/async" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "projectName":"async-smoke",
+    "maxRows":1,
+    "rows":[{"화면":"https://example.com","구분":"기본","테스트시나리오":"렌더"}]
+  }' | python3 -c 'import json,sys; print(json.load(sys.stdin)["jobId"])')
+
+# poll until done/error
+while true; do
+  R=$(curl -sS "$BASE/api/checklist/execute/status/$JOB_ID")
+  S=$(printf '%s' "$R" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status"))')
+  echo "status=$S"
+  [ "$S" = "done" ] && break
+  [ "$S" = "error" ] && { echo "$R"; exit 1; }
+  sleep 1
+done
+
+printf '%s' "$R" | python3 -c 'import json,sys; j=json.load(sys.stdin); assert j.get("ok") and j.get("summary",{}).get("PASS",0)>=1; print("async smoke pass")'
+```
 
 ### GET `/api/qa/templates`
 QA 참고 플로우 템플릿 목록 조회.
