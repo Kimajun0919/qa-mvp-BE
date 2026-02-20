@@ -341,6 +341,26 @@ Response fields
   - `실행메타.scenarioKind`: `AUTH|VALIDATION|INTERACTION|RESPONSIVE|PUBLISHING|SMOKE`
 - `finalSheet`: object (`csv`,`xlsx`)
 
+### POST `/api/checklist/execute/async`
+비동기 실행 요청 큐 등록. 장시간 실행/터널 환경에서 권장.
+
+Request body: `POST /api/checklist/execute`와 동일
+
+Response fields
+- `ok`: boolean
+- `jobId`: string
+- `status`: `queued`
+
+### GET `/api/checklist/execute/status/{jobId}`
+비동기 실행 상태/결과 조회.
+
+Response fields
+- `ok`: boolean
+- `jobId`: string
+- `status`: `queued|running|done|error`
+- `summary`,`coverage`,`rows`,`finalSheet` (status=done 시)
+- `error` (status=error 시)
+
 ### GET `/api/qa/templates`
 QA 참고 플로우 템플릿 목록 조회.
 

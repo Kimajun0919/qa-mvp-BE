@@ -1,6 +1,8 @@
+import asyncio
 import os
 import time
 from pathlib import Path
+from uuid import uuid4
 from typing import Any, Dict
 from urllib.parse import urlparse
 
@@ -30,6 +32,7 @@ REQUEST_TIMEOUT_SEC = float(os.getenv("QA_API_TIMEOUT_SEC", "180"))
 app = FastAPI(title=APP_NAME, version="0.1.0")
 
 native_analysis_store: Dict[str, Dict[str, Any]] = {}
+execute_jobs: Dict[str, Dict[str, Any]] = {}
 Path("out").mkdir(parents=True, exist_ok=True)
 app.mount("/out", StaticFiles(directory="out"), name="out")
 
@@ -273,39 +276,86 @@ async def checklist(req: Request) -> Dict[str, Any]:
     return out
 
 
-@app.post("/api/checklist/execute")
-async def checklist_execute(req: Request) -> Dict[str, Any]:
-    payload = await req.json()
+def _extract_execute_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     rows = payload.get("rows") or []
     if not isinstance(rows, list) or not rows:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "rows required"})
-    max_rows = int(payload.get("maxRows", 20) or 20)
-    auth = payload.get("auth") if isinstance(payload.get("auth"), dict) else {}
-    exhaustive = bool(payload.get("exhaustive", False))
-    exhaustive_clicks = int(payload.get("exhaustiveClicks", 12) or 12)
-    exhaustive_inputs = int(payload.get("exhaustiveInputs", 12) or 12)
-    exhaustive_depth = int(payload.get("exhaustiveDepth", 1) or 1)
-    exhaustive_budget_ms = int(payload.get("exhaustiveBudgetMs", 20000) or 20000)
-    allow_risky_actions = bool(payload.get("allowRiskyActions", False))
+    return {
+        "rows": rows,
+        "max_rows": int(payload.get("maxRows", 20) or 20),
+        "auth": payload.get("auth") if isinstance(payload.get("auth"), dict) else {},
+        "exhaustive": bool(payload.get("exhaustive", False)),
+        "exhaustive_clicks": int(payload.get("exhaustiveClicks", 12) or 12),
+        "exhaustive_inputs": int(payload.get("exhaustiveInputs", 12) or 12),
+        "exhaustive_depth": int(payload.get("exhaustiveDepth", 1) or 1),
+        "exhaustive_budget_ms": int(payload.get("exhaustiveBudgetMs", 20000) or 20000),
+        "allow_risky_actions": bool(payload.get("allowRiskyActions", False)),
+        "run_id": str(payload.get("runId", "")).strip() or f"exec_{int(time.time()*1000)}",
+        "project_name": str(payload.get("projectName", "QA 테스트시트")).strip(),
+    }
 
+
+async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
     result = await execute_checklist_rows(
-        rows,
-        max_rows=max_rows,
-        auth=auth,
-        exhaustive=exhaustive,
-        exhaustive_clicks=exhaustive_clicks,
-        exhaustive_inputs=exhaustive_inputs,
-        exhaustive_depth=exhaustive_depth,
-        exhaustive_budget_ms=exhaustive_budget_ms,
-        allow_risky_actions=allow_risky_actions,
+        cfg["rows"],
+        max_rows=cfg["max_rows"],
+        auth=cfg["auth"],
+        exhaustive=cfg["exhaustive"],
+        exhaustive_clicks=cfg["exhaustive_clicks"],
+        exhaustive_inputs=cfg["exhaustive_inputs"],
+        exhaustive_depth=cfg["exhaustive_depth"],
+        exhaustive_budget_ms=cfg["exhaustive_budget_ms"],
+        allow_risky_actions=cfg["allow_risky_actions"],
     )
     if not result.get("ok"):
-        raise HTTPException(status_code=500, detail={"ok": False, "error": result.get("error")})
+        return {"ok": False, "error": result.get("error")}
+    final_sheet = write_final_testsheet(cfg["run_id"], cfg["project_name"], result.get("rows") or [])
+    return {
+        "ok": True,
+        "summary": result.get("summary"),
+        "coverage": result.get("coverage"),
+        "loginUsed": result.get("loginUsed", False),
+        "rows": result.get("rows"),
+        "finalSheet": final_sheet,
+    }
 
-    run_id = str(payload.get("runId", "")).strip() or f"exec_{int(time.time()*1000)}"
-    project_name = str(payload.get("projectName", "QA 테스트시트")).strip()
-    final_sheet = write_final_testsheet(run_id, project_name, result.get("rows") or [])
-    return {"ok": True, "summary": result.get("summary"), "coverage": result.get("coverage"), "loginUsed": result.get("loginUsed", False), "rows": result.get("rows"), "finalSheet": final_sheet}
+
+@app.post("/api/checklist/execute")
+async def checklist_execute(req: Request) -> Dict[str, Any]:
+    payload = await req.json()
+    cfg = _extract_execute_payload(payload)
+    out = await _execute_and_finalize(cfg)
+    if not out.get("ok"):
+        raise HTTPException(status_code=500, detail={"ok": False, "error": out.get("error")})
+    return out
+
+
+@app.post("/api/checklist/execute/async")
+async def checklist_execute_async(req: Request) -> Dict[str, Any]:
+    payload = await req.json()
+    cfg = _extract_execute_payload(payload)
+    job_id = f"job_{uuid4().hex[:12]}"
+    execute_jobs[job_id] = {"ok": True, "jobId": job_id, "status": "queued", "createdAt": int(time.time() * 1000)}
+
+    async def _runner() -> None:
+        execute_jobs[job_id]["status"] = "running"
+        execute_jobs[job_id]["startedAt"] = int(time.time() * 1000)
+        try:
+            out = await _execute_and_finalize(cfg)
+            execute_jobs[job_id] = {**execute_jobs[job_id], **out, "status": "done", "endedAt": int(time.time() * 1000)}
+        except Exception as e:
+            execute_jobs[job_id] = {**execute_jobs[job_id], "ok": False, "status": "error", "error": str(e), "endedAt": int(time.time() * 1000)}
+
+    asyncio.create_task(_runner())
+    return {"ok": True, "jobId": job_id, "status": "queued"}
+
+
+@app.get("/api/checklist/execute/status/{job_id}")
+async def checklist_execute_status(job_id: str) -> Dict[str, Any]:
+    job = execute_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"ok": False, "error": "job not found"})
+    return job
 
 
 @app.get("/api/qa/templates")
