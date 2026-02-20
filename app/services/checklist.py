@@ -76,8 +76,9 @@ def _split_parts(text: str, delimiters: List[str], max_parts: int = 4) -> List[s
 
 def _resolve_expansion(expand: bool = False, mode: str = "none") -> Set[str]:
     m = (mode or "none").strip().lower()
-    if m in ("none", "off", "false", "0"):
-        return set()
+    # backward-compat guardrail: legacy callers may send checklistExpand=true without mode
+    if m in ("none", "off", "false", "0", ""):
+        return set(EXPANSION_KEYS) if expand else set()
     if m == "all":
         return set(EXPANSION_KEYS)
     keys = {x.strip() for x in m.split(",") if x.strip()}
@@ -128,7 +129,7 @@ def _expand_rows(rows: List[Dict[str, str]], expansion: Set[str], max_rows: int)
             if len(expanded) >= max_rows:
                 return expanded
 
-    return expanded
+    return expanded or rows[:max_rows]
 
 
 def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) -> List[Dict[str, str]]:

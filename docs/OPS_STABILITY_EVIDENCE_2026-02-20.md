@@ -92,3 +92,55 @@ Result highlights:
 - `http://example.com`
   - `candidateCount=4`
   - stable generic floor candidates preserved
+
+---
+
+## Cycle9 BE Guardrails (Checklist expansion + parity signal consistency)
+
+### Goal
+- Add anti-regression guardrails for checklist expansion behavior (legacy flag compatibility)
+- Keep `metrics.paritySignals` schema stable/consistent across targets
+- Preserve backward compatibility (additive changes only)
+
+### Code Changes
+- `app/services/checklist.py`
+  - `_resolve_expansion` guardrail:
+    - `expand=true` + `expand_mode=none|off|false|0|""` now resolves to full expansion (`field,action,assertion`) for legacy callers
+  - `_expand_rows` guardrail:
+    - if expansion yields no rows unexpectedly, fallback to original rows (`rows[:max_rows]`) to prevent empty-result regression
+- `app/services/analyze.py`
+  - Added `_normalize_parity_signals()` to coerce parity fields into stable schema/types
+  - `_collect_parity_signals()` now returns normalized shape
+  - `_infer_candidate_flows()` now consumes normalized parity signals to avoid schema/type drift
+- `scripts/smoke_candidate_parity.py`
+  - Added parity schema assertions for all smoke targets
+  - Added checklist expansion guardrail assertions:
+    - legacy expansion (`expand=true` + `mode=none`) must expose full expansion modes
+    - field-only expansion mode must stay exact (`["field"]`)
+- `docs/API_SPEC.md`
+  - Documented stable `metrics.paritySignals` schema explicitly
+  - Documented backward-compatible expansion semantics for `checklistExpand=true` + `checklistExpandMode=none`
+- `docs/OPS_AUTOMATION.md`
+  - Updated parity smoke reference to `python scripts/smoke_candidate_parity.py`
+
+### Verification Evidence
+
+1) Compile
+```bash
+/tmp/qa-mvp-BE/.venv/bin/python -m compileall app scripts
+```
+Result: success
+
+2) Guardrail smoke
+```bash
+QA_ANALYZE_DYNAMIC=0 QA_ANALYZE_MAX_PAGES=8 QA_ANALYZE_MAX_DEPTH=1 /tmp/qa-mvp-BE/.venv/bin/python scripts/smoke_candidate_parity.py
+```
+Result: success (exit 0)
+
+3) Persisted smoke artifact
+- `/tmp/cycle9_guardrails_smoke.json`
+- includes:
+  - per-target parity signals with stable keys
+  - checklist guardrail summary with
+    - `legacyExpansion.modes=["action","assertion","field"]`
+    - `fieldExpansion.modes=["field"]`

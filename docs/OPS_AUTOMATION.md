@@ -12,7 +12,7 @@ npm run ops:check
 실행 내용:
 1. 로컬 스택 정리/기동 (`scripts/ensure_local_stack.sh`)
 2. Node/FastAPI health 확인
-3. parity smoke (`scripts/smoke_parity.sh`)
+3. parity + guardrail smoke (`python scripts/smoke_candidate_parity.py`)
 4. analyze spot-check
 
 결과 로그:

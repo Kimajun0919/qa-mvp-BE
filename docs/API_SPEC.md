@@ -96,11 +96,19 @@ Response fields
 - `limits`: object
 - `plannerMode`: `"llm" | "heuristic"`
 - `plannerReason`: string
-- `metrics`: object (`paritySignals` 포함 가능: `docsDriftRisk/docsSignalCount/formSignalCount/...`)
+- `metrics`: object (`paritySignals` 포함: `docsDriftRisk/docsSignalCount/formSignalCount/strongFormSignal/singlePageFormTendency/authLikely`)
 - `reports`: object (`sitemapPath`, `menuPath`, `qualityPath`)
 - `advisories`: array (robots/auth/limited-crawl 안내)
 - `robots`: object (`blockAll`, `hasRules`)
 - `candidates`: array of candidate flow objects
+
+`metrics.paritySignals` schema (stable/additive):
+- `docsDriftRisk`: `LOW|MEDIUM|HIGH`
+- `docsSignalCount`: number (>=0)
+- `formSignalCount`: number (>=0)
+- `strongFormSignal`: boolean
+- `singlePageFormTendency`: boolean
+- `authLikely`: boolean
 
 Candidate object:
 ```json
@@ -269,6 +277,7 @@ Required fields
 Optional expansion controls
 - `checklistExpand`: boolean (default `false`)
 - `checklistExpandMode`: `none|all|field|action|assertion` (comma-separated 조합 허용)
+  - backward compatibility: `checklistExpand=true` + `checklistExpandMode=none`(or omitted) 는 `all`로 처리
 - `checklistExpandLimit`: number (default 40, max 300)
 
 Response fields

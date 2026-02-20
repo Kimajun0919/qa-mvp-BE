@@ -184,6 +184,29 @@ def _priority_score(path: str, role: str) -> int:
     return min(score, 100)
 
 
+def _normalize_parity_signals(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    src = raw if isinstance(raw, dict) else {}
+
+    docs_risk = str(src.get("docsDriftRisk") or "LOW").upper()
+    if docs_risk not in {"LOW", "MEDIUM", "HIGH"}:
+        docs_risk = "LOW"
+
+    def _to_nonneg_int(v: Any) -> int:
+        try:
+            return max(0, int(v or 0))
+        except Exception:
+            return 0
+
+    return {
+        "docsDriftRisk": docs_risk,
+        "docsSignalCount": _to_nonneg_int(src.get("docsSignalCount")),
+        "formSignalCount": _to_nonneg_int(src.get("formSignalCount")),
+        "strongFormSignal": bool(src.get("strongFormSignal", False)),
+        "singlePageFormTendency": bool(src.get("singlePageFormTendency", False)),
+        "authLikely": bool(src.get("authLikely", False)),
+    }
+
+
 def _collect_parity_signals(pages: List[PageInfo], menu_rows: List[Dict[str, Any]], form_type_counts: Dict[str, int], auth_likely: bool) -> Dict[str, Any]:
     tokens: List[str] = []
     for p in pages:
@@ -198,14 +221,16 @@ def _collect_parity_signals(pages: List[PageInfo], menu_rows: List[Dict[str, Any
     strong_form = form_total > 0 and int(form_type_counts.get("UNKNOWN", 0) or 0) <= max(1, form_total // 2)
     has_single_page_form_tendency = len({p.path for p in pages}) <= 2 and form_total > 0
 
-    return {
-        "docsDriftRisk": "HIGH" if docs_hits >= 4 else ("MEDIUM" if docs_hits >= 2 else "LOW"),
-        "docsSignalCount": docs_hits,
-        "formSignalCount": form_total,
-        "strongFormSignal": strong_form,
-        "singlePageFormTendency": has_single_page_form_tendency,
-        "authLikely": bool(auth_likely),
-    }
+    return _normalize_parity_signals(
+        {
+            "docsDriftRisk": "HIGH" if docs_hits >= 4 else ("MEDIUM" if docs_hits >= 2 else "LOW"),
+            "docsSignalCount": docs_hits,
+            "formSignalCount": form_total,
+            "strongFormSignal": strong_form,
+            "singlePageFormTendency": has_single_page_form_tendency,
+            "authLikely": bool(auth_likely),
+        }
+    )
 
 
 def _infer_candidate_flows(
@@ -244,7 +269,7 @@ def _infer_candidate_flows(
         },
     ]
 
-    parity_signals = parity_signals or {}
+    parity_signals = _normalize_parity_signals(parity_signals)
     docs_signal_count = int(parity_signals.get("docsSignalCount") or 0)
 
     if _has_any("/docs", "/doc", "/guide", "/tutorial", "/reference", "/api") or docs_signal_count >= 2:
