@@ -537,6 +537,8 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "retryStats": result.get("retryStats") or {},
         "loginUsed": result.get("loginUsed", False),
         "rows": result.get("rows"),
+        "decompositionRows": result.get("decompositionRows") or [],
+        "decompositionRowsPath": result.get("decompositionRowsPath") or "",
         "finalSheet": final_sheet,
     }
 
@@ -572,6 +574,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
         try:
             rows_all = cfg.get("rows") or []
             merged_rows: list[Dict[str, Any]] = []
+            merged_decomp_rows: list[Dict[str, Any]] = []
             merged_summary = {"PASS": 0, "FAIL": 0, "BLOCKED": 0}
             merged_hints: Dict[str, str] = {}
             last_cov: Dict[str, Any] = {}
@@ -598,6 +601,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                     raise Exception(str(part.get("error") or "execute failed"))
 
                 merged_rows.extend(part.get("rows") or [])
+                merged_decomp_rows.extend(part.get("decompositionRows") or [])
                 s = part.get("summary") or {}
                 merged_summary["PASS"] += int(s.get("PASS") or 0)
                 merged_summary["FAIL"] += int(s.get("FAIL") or 0)
@@ -637,6 +641,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "failureCodeHints": merged_hints,
                 "retryStats": merged_retry_stats,
                 "rows": merged_rows,
+                "decompositionRows": merged_decomp_rows,
                 "finalSheet": final_sheet,
                 "endedAt": int(time.time() * 1000),
             }

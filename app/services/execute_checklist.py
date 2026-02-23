@@ -151,6 +151,80 @@ def _failure_decomposition(
     }
 
 
+def _atomic_decomposition_rows(
+    *,
+    row: Dict[str, Any],
+    status: str,
+    reason: str,
+    failure_code: str,
+    meta: Dict[str, Any],
+    elems: Dict[str, int],
+    evidence_meta: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Create execution-time atomic decomposition rows (field/action/assertion).
+
+    This is intentionally execution-driven (uses observed meta/elems/evidence),
+    not schema-only decomposition.
+    """
+    base = _failure_decomposition(
+        row=row,
+        status=status,
+        reason=reason,
+        failure_code=failure_code,
+        meta=meta,
+        elems=elems,
+        evidence_meta=evidence_meta,
+    )
+
+    field = str(base.get("field") or "").strip()
+    action = str(base.get("action") or "").strip()
+    observed_action = str(meta.get("action") or action or "").strip()
+    expected = str((base.get("assertion") or {}).get("expected") or "").strip()
+    observed = str((base.get("assertion") or {}).get("observed") or "").strip()
+
+    signal_surface = int(elems.get("buttons", 0) or 0) + int(elems.get("links", 0) or 0) + int(elems.get("forms", 0) or 0)
+
+    rows: List[Dict[str, Any]] = [
+        {
+            "kind": "FIELD",
+            "field": field or str(row.get("module") or row.get("화면") or ""),
+            "action": "detect-surface",
+            "assertion": {
+                "expected": "field/surface should exist",
+                "observed": f"surface={signal_surface}",
+                "pass": signal_surface > 0,
+                "failureCode": "OK" if signal_surface > 0 else "ASSERT_INTERACTION_SURFACE_LOW",
+            },
+            "evidence": base.get("evidence"),
+        },
+        {
+            "kind": "ACTION",
+            "field": field,
+            "action": observed_action or "no-observed-action",
+            "assertion": {
+                "expected": action or "action should be executable",
+                "observed": observed_action or "not-executed",
+                "pass": bool(observed_action),
+                "failureCode": "OK" if observed_action else "BLOCKED_RUNTIME",
+            },
+            "evidence": base.get("evidence"),
+        },
+        {
+            "kind": "ASSERTION",
+            "field": field,
+            "action": observed_action or action,
+            "assertion": {
+                "expected": expected,
+                "observed": observed,
+                "pass": status == "PASS",
+                "failureCode": failure_code,
+            },
+            "evidence": base.get("evidence"),
+        },
+    ]
+    return rows
+
+
 async def _login_if_possible(page: Any, auth: Dict[str, Any]) -> bool:
     login_url = str(auth.get("loginUrl") or "").strip()
     user_id = str(auth.get("userId") or "").strip()
@@ -524,6 +598,7 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
     out_dir.mkdir(parents=True, exist_ok=True)
 
     executed: List[Dict[str, Any]] = []
+    atomic_rows: List[Dict[str, Any]] = []
     summary = {"PASS": 0, "FAIL": 0, "BLOCKED": 0}
     failure_code_hints: Dict[str, str] = {}
     coverage_totals = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
@@ -621,6 +696,16 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
                 elems=elems,
                 evidence_meta=evidence_meta,
             )
+            nr["decompositionRows"] = _atomic_decomposition_rows(
+                row=r,
+                status=status,
+                reason=reason,
+                failure_code=fail_code,
+                meta=meta,
+                elems=elems,
+                evidence_meta=evidence_meta,
+            )
+            atomic_rows.extend([{"parentRowNo": i, **x} for x in (nr.get("decompositionRows") or [])])
             if not nr.get("테스트시나리오"):
                 nr["테스트시나리오"] = scenario
             if not nr.get("화면"):
@@ -676,4 +761,23 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
     }
     retry_stats["totalRows"] = len(executed)
     retry_stats["retryRate"] = round(int(retry_stats.get("eligibleRows", 0)) / max(1, len(executed)), 3)
-    return {"ok": True, "rows": executed, "summary": summary, "coverage": coverage, "loginUsed": login_used, "failureCodeHints": failure_code_hints, "retryStats": retry_stats}
+
+    atomic_path = out_dir / f"decomposition_rows_{int(time.time()*1000)}.json"
+    try:
+        import json
+
+        atomic_path.write_text(json.dumps(atomic_rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        atomic_path = Path("")
+
+    return {
+        "ok": True,
+        "rows": executed,
+        "summary": summary,
+        "coverage": coverage,
+        "loginUsed": login_used,
+        "failureCodeHints": failure_code_hints,
+        "retryStats": retry_stats,
+        "decompositionRows": atomic_rows,
+        "decompositionRowsPath": str(atomic_path).replace("\\", "/") if str(atomic_path) else "",
+    }
