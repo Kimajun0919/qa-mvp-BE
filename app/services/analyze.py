@@ -398,10 +398,12 @@ def _looks_flow_like_name(name: str) -> bool:
     if len(n) > 72:
         return False
     low = n.lower()
-    banned = [" is ", " are ", " has ", " have ", "python is", "this page", "community includes"]
+    banned = [" is ", " are ", " has ", " have ", "python is", "this page", "community includes", "stack overflow"]
     if any(b in low for b in banned):
         return False
-    # require at least one flow-ish token so LLM prose doesn't leak through
+
+    # require at least one flow-ish token on word boundaries so unrelated nouns
+    # (e.g., 'Stack Overflow') do not pass via substring hit on 'flow'.
     flow_tokens = [
         "journey",
         "flow",
@@ -417,7 +419,7 @@ def _looks_flow_like_name(name: str) -> bool:
         "support",
         "smoke",
     ]
-    return any(t in low for t in flow_tokens)
+    return any(re.search(rf"\\b{re.escape(t)}\\b", low) for t in flow_tokens)
 
 
 def _write_analysis_reports(analysis_id: str, pages: List[PageInfo], menu_rows: List[Dict[str, Any]], metrics: Dict[str, Any]) -> Dict[str, str]:
