@@ -18,6 +18,7 @@ from app.services.checklist import generate_checklist
 TARGETS = [
     "https://httpbin.org/forms/post",
     "https://docs.openclaw.ai",
+    "https://www.python.org",
     "http://example.com",
 ]
 
@@ -116,6 +117,13 @@ async def main() -> int:
     if docs_risk not in {"MEDIUM", "HIGH"}:
         print(f"FAIL: docs parity signal weak (docsDriftRisk={docs_risk})", file=sys.stderr)
         return 1
+
+    python_org = raw_by_url.get("https://www.python.org", {})
+    for nm in (python_org.get("candidateNames") or []):
+        low = str(nm or "").lower()
+        if " is " in low or len(str(nm or "")) > 90:
+            print(f"FAIL: python.org candidate not normalized as flow name => {nm}", file=sys.stderr)
+            return 1
 
     base_rows = int(checklist_guardrail.get("baseRows") or 0)
     legacy_expand_rows = int(checklist_guardrail.get("legacyExpandRows") or 0)

@@ -391,6 +391,35 @@ def _infer_candidate_flows(
     return deduped[:6]
 
 
+def _looks_flow_like_name(name: str) -> bool:
+    n = str(name or "").strip()
+    if not n:
+        return False
+    if len(n) > 72:
+        return False
+    low = n.lower()
+    banned = [" is ", " are ", " has ", " have ", "python is", "this page", "community includes"]
+    if any(b in low for b in banned):
+        return False
+    # require at least one flow-ish token so LLM prose doesn't leak through
+    flow_tokens = [
+        "journey",
+        "flow",
+        "navigation",
+        "discovery",
+        "integrity",
+        "check",
+        "probe",
+        "auth",
+        "search",
+        "checkout",
+        "download",
+        "support",
+        "smoke",
+    ]
+    return any(t in low for t in flow_tokens)
+
+
 def _write_analysis_reports(analysis_id: str, pages: List[PageInfo], menu_rows: List[Dict[str, Any]], metrics: Dict[str, Any]) -> Dict[str, str]:
     out_dir = Path("out/report")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -610,16 +639,32 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
     inferred_candidates = _infer_candidate_flows(pages, menu_rows, service_type, auth_likely, form_type_counts, parity_signals=parity_signals)
 
     candidates: List[Dict[str, Any]] = []
+    llm_candidate_diagnostics: List[Dict[str, Any]] = []
     if ok:
         data = parse_json_text(content_or_err)
         raw = data.get("candidates") if isinstance(data, dict) else None
         if isinstance(raw, list):
             for i, c in enumerate(raw[:6]):
                 if not isinstance(c, dict):
+                    llm_candidate_diagnostics.append({"index": i, "accepted": False, "reason": "not-object"})
                     continue
                 name = str(c.get("name") or f"Flow {i+1}").strip()
                 ptype = str(c.get("platformType") or service_type).strip().upper()
                 conf = float(c.get("confidence") or 0.7)
+
+                if not _looks_flow_like_name(name):
+                    llm_candidate_diagnostics.append(
+                        {
+                            "index": i,
+                            "accepted": False,
+                            "reason": "name-not-flow-like",
+                            "namePreview": name[:90],
+                            "platformType": ptype,
+                        }
+                    )
+                    continue
+
+                llm_candidate_diagnostics.append({"index": i, "accepted": True, "namePreview": name[:90], "platformType": ptype})
                 candidates.append(
                     {
                         "name": name,
@@ -628,6 +673,8 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
                         "status": "PROPOSED",
                     }
                 )
+
+    llm_accepted_count = len(candidates)
 
     # Node-path parity: keep LLM candidates, then top-up with extracted route/signal candidates.
     merged: List[Dict[str, Any]] = []
@@ -722,6 +769,11 @@ async def analyze_site(base_url: str, provider: Optional[str] = None, model: Opt
             "hasRules": robots_requires_review,
         },
         "candidates": candidates,
+        "analysisDiagnostics": {
+            "llmCandidateFilter": llm_candidate_diagnostics,
+            "llmAcceptedCandidates": llm_accepted_count,
+            "heuristicTopupCandidates": max(0, len(candidates) - llm_accepted_count),
+        },
         "provider": used_provider,
         "model": used_model,
         "_native": {

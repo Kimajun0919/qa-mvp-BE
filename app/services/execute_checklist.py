@@ -112,6 +112,45 @@ def _retry_eligible(retry_class: str) -> bool:
     return retry_class in {"TRANSIENT", "WEAK_SIGNAL", "CONDITIONAL"}
 
 
+def _failure_decomposition(
+    *,
+    row: Dict[str, Any],
+    status: str,
+    reason: str,
+    failure_code: str,
+    meta: Dict[str, Any],
+    elems: Dict[str, int],
+    evidence_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    action = str(row.get("action") or row.get("테스트시나리오") or "").strip()
+    expected = str(row.get("expected") or row.get("확인") or "").strip()
+    field = str(row.get("element") or row.get("module") or row.get("화면") or "").strip()
+    observed = str(reason or status)
+
+    assertion = {
+        "expected": expected,
+        "observed": observed,
+        "pass": status == "PASS",
+        "failureCode": failure_code,
+    }
+    evidence = {
+        "httpStatus": int(meta.get("httpStatus") or 0),
+        "scenarioKind": str(meta.get("scenarioKind") or ""),
+        "title": str(meta.get("title") or ""),
+        "observedUrl": str(meta.get("urlAfter") or evidence_meta.get("observedUrl") or ""),
+        "elements": {k: int(v or 0) for k, v in (elems or {}).items()},
+        "screenshotPath": str(evidence_meta.get("screenshotPath") or ""),
+        "timestamp": int(evidence_meta.get("timestamp") or 0),
+    }
+
+    return {
+        "field": field,
+        "action": action,
+        "assertion": assertion,
+        "evidence": evidence,
+    }
+
+
 async def _login_if_possible(page: Any, auth: Dict[str, Any]) -> bool:
     login_url = str(auth.get("loginUrl") or "").strip()
     user_id = str(auth.get("userId") or "").strip()
@@ -573,6 +612,15 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
             nr["remediationHint"] = remediation_hint
             nr["확인"] = status
             nr["actual"] = status if not reason else f"{status}: {reason}"
+            nr["failureDecomposition"] = _failure_decomposition(
+                row=r,
+                status=status,
+                reason=reason,
+                failure_code=fail_code,
+                meta=meta,
+                elems=elems,
+                evidence_meta=evidence_meta,
+            )
             if not nr.get("테스트시나리오"):
                 nr["테스트시나리오"] = scenario
             if not nr.get("화면"):
