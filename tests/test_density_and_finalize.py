@@ -42,6 +42,9 @@ class DensityAndFinalizeTests(unittest.TestCase):
         cfg = _extract_execute_payload({"rows": [{"화면": "https://example.com", "테스트시나리오": "렌더"}]})
         self.assertFalse(cfg["allow_risky_actions"])
         self.assertEqual(cfg["exhaustive"], False)
+        self.assertEqual(cfg["exhaustive_clicks"], 8)
+        self.assertEqual(cfg["exhaustive_inputs"], 8)
+        self.assertEqual(cfg["exhaustive_budget_ms"], 12000)
         self.assertLessEqual(cfg["exhaustive_depth"], 2)
 
 

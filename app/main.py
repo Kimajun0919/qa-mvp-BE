@@ -532,10 +532,10 @@ def _extract_execute_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "max_rows": max_rows,
         "auth": payload.get("auth") if isinstance(payload.get("auth"), dict) else {},
         "exhaustive": bool(payload.get("exhaustive", False)),
-        "exhaustive_clicks": max(1, min(int(payload.get("exhaustiveClicks", 12) or 12), 16)),
-        "exhaustive_inputs": max(1, min(int(payload.get("exhaustiveInputs", 12) or 12), 16)),
+        "exhaustive_clicks": max(1, min(int(payload.get("exhaustiveClicks", 8) or 8), 16)),
+        "exhaustive_inputs": max(1, min(int(payload.get("exhaustiveInputs", 8) or 8), 16)),
         "exhaustive_depth": max(1, min(int(payload.get("exhaustiveDepth", 1) or 1), 2)),
-        "exhaustive_budget_ms": max(3000, min(int(payload.get("exhaustiveBudgetMs", 20000) or 20000), 30000)),
+        "exhaustive_budget_ms": max(3000, min(int(payload.get("exhaustiveBudgetMs", 12000) or 12000), 30000)),
         "allow_risky_actions": bool(payload.get("allowRiskyActions", False)),
         "run_id": str(payload.get("runId", "")).strip() or f"exec_{int(time.time()*1000)}",
         "project_name": str(payload.get("projectName", "QA 테스트시트")).strip(),
@@ -561,6 +561,7 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "ok": True,
         "summary": result.get("summary"),
         "coverage": result.get("coverage"),
+        "metrics": result.get("metrics") or {},
         "failureCodeHints": result.get("failureCodeHints") or {},
         "retryStats": result.get("retryStats") or {},
         "loginUsed": result.get("loginUsed", False),
@@ -585,7 +586,7 @@ async def checklist_execute(req: Request) -> Dict[str, Any]:
 async def checklist_execute_async(req: Request) -> Dict[str, Any]:
     payload = await _json_payload(req)
     cfg = _extract_execute_payload(payload)
-    batch_size = max(1, min(int(payload.get("batchSize", 5) or 5), 8))
+    batch_size = max(1, min(int(payload.get("batchSize", 8) or 8), 12))
     job_id = f"job_{uuid4().hex[:12]}"
     total_rows = len(cfg.get("rows") or [])
     execute_jobs[job_id] = {
@@ -593,7 +594,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
         "jobId": job_id,
         "status": "queued",
         "createdAt": int(time.time() * 1000),
-        "progress": {"doneRows": 0, "totalRows": total_rows, "percent": 0},
+        "progress": {"doneRows": 0, "totalRows": total_rows, "completed_rows": 0, "target_rows": total_rows, "percent": 0},
     }
 
     async def _runner() -> None:
@@ -611,6 +612,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "ineligibleRows": 0,
                 "byClass": {"NONE": 0, "TRANSIENT": 0, "WEAK_SIGNAL": 0, "CONDITIONAL": 0, "NON_RETRYABLE": 0},
             }
+            merged_metrics: Dict[str, Any] = {"completed_rows": 0, "target_rows": len(rows_all)}
 
             for i in range(0, len(rows_all), batch_size):
                 chunk = rows_all[i:i + batch_size]
@@ -650,10 +652,15 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                         if isinstance(cls, str):
                             merged_retry_stats["byClass"][cls] = int(merged_retry_stats["byClass"].get(cls, 0)) + int(cnt or 0)
 
-                done = min(len(rows_all), i + len(chunk))
+                part_metrics = part.get("metrics") if isinstance(part.get("metrics"), dict) else {}
+                merged_metrics["completed_rows"] += int(part_metrics.get("completed_rows") or len(part.get("rows") or []))
+                merged_metrics["target_rows"] = int(part_metrics.get("target_rows") or merged_metrics.get("target_rows") or len(rows_all))
+                done = min(len(rows_all), int(merged_metrics.get("completed_rows") or 0))
                 execute_jobs[job_id]["progress"] = {
                     "doneRows": done,
                     "totalRows": len(rows_all),
+                    "completed_rows": done,
+                    "target_rows": len(rows_all),
                     "percent": int((done / max(1, len(rows_all))) * 100),
                 }
 
@@ -666,6 +673,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "status": "done",
                 "summary": merged_summary,
                 "coverage": last_cov,
+                "metrics": {"completed_rows": len(merged_rows), "target_rows": len(rows_all)},
                 "failureCodeHints": merged_hints,
                 "retryStats": merged_retry_stats,
                 "rows": merged_rows,
