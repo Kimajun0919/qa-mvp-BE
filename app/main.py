@@ -410,9 +410,9 @@ async def analysis_get(analysis_id: str) -> Dict[str, Any]:
 
 @app.delete("/api/analysis/{analysis_id}")
 async def analysis_delete(analysis_id: str) -> Dict[str, Any]:
-    native_analysis_store.pop(analysis_id, None)
-    deleted = delete_bundle(analysis_id)
-    return {"ok": True, "analysisId": analysis_id, "deleted": bool(deleted)}
+    deleted_in_memory = native_analysis_store.pop(analysis_id, None) is not None
+    deleted_in_db = delete_bundle(analysis_id)
+    return {"ok": True, "analysisId": analysis_id, "deleted": bool(deleted_in_memory or deleted_in_db)}
 
 
 @app.post("/api/flow-map")
