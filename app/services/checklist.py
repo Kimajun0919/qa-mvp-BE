@@ -132,6 +132,11 @@ def _expand_rows(rows: List[Dict[str, str]], expansion: Set[str], max_rows: int)
     return expanded or rows[:max_rows]
 
 
+def _is_board_domain(screen: str, context: str = "") -> bool:
+    low = f"{screen} {context}".lower()
+    return any(k in low for k in ["board", "post", "article", "notice", "forum", "thread", "게시", "게시판", "글", "공지", "댓글", "첨부"])
+
+
 def _screen_sections(screen: str, context: str = "") -> List[str]:
     low = f"{screen} {context}".lower()
     sections: List[str] = ["헤더", "메인콘텐츠", "푸터"]
@@ -141,7 +146,17 @@ def _screen_sections(screen: str, context: str = "") -> List[str]:
         sections.append("목록영역")
     if any(k in low for k in ["modal", "dialog", "popup", "모달"]):
         sections.append("모달영역")
-    return sections
+    if _is_board_domain(screen, context):
+        sections.extend(["게시목록", "게시상세", "게시작성"])
+
+    dedup: List[str] = []
+    seen = set()
+    for x in sections:
+        if x in seen:
+            continue
+        seen.add(x)
+        dedup.append(x)
+    return dedup
 
 
 def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) -> List[Dict[str, str]]:
@@ -154,11 +169,24 @@ def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) 
             _normalize_row({"화면": module, "구분": "예외", "element": section, "action": f"{section}에서 필수값 누락 또는 잘못된 입력으로 제출한다", "expected": "유효성 오류가 노출되고 제출 차단", "actual": ""}, default_screen=module),
         ])
 
+    if _is_board_domain(screen, context):
+        board_module = f"{screen}::게시판핵심"
+        rows.extend([
+            _normalize_row({"화면": board_module, "구분": "기능", "element": "게시목록", "action": "게시글 목록을 최신순/조회순으로 정렬 전환한다", "expected": "정렬 기준이 반영되고 목록 순서가 즉시 변경", "actual": ""}, default_screen=board_module),
+            _normalize_row({"화면": board_module, "구분": "기능", "element": "검색/필터", "action": "제목 키워드 검색과 카테고리 필터를 조합한다", "expected": "조건에 맞는 결과만 노출되고 건수 표시가 일치", "actual": ""}, default_screen=board_module),
+            _normalize_row({"화면": board_module, "구분": "경계", "element": "페이지네이션", "action": "첫/마지막 페이지와 빈 결과 페이지를 이동한다", "expected": "페이지 이동이 정상이며 빈 상태 문구가 노출", "actual": ""}, default_screen=board_module),
+            _normalize_row({"화면": board_module, "구분": "기능", "element": "게시상세", "action": "목록에서 상세 진입 후 다시 목록으로 복귀한다", "expected": "이전 목록 상태(정렬/필터/페이지)가 유지", "actual": ""}, default_screen=board_module),
+            _normalize_row({"화면": board_module, "구분": "예외", "element": "게시작성", "action": "제목/본문 필수값 누락 상태에서 임시저장을 시도한다", "expected": "필수값 오류를 노출하고 비정상 저장을 차단", "actual": ""}, default_screen=board_module),
+            _normalize_row({"화면": board_module, "구분": "기능", "element": "첨부파일", "action": "허용 확장자 파일 첨부 후 첨부목록에서 미리보기를 확인한다", "expected": "첨부 업로드 상태와 파일 메타정보가 정확히 반영", "actual": ""}, default_screen=board_module),
+            _normalize_row({"화면": board_module, "구분": "예외", "element": "첨부파일", "action": "제한 용량 초과 또는 금지 확장자 첨부를 시도한다", "expected": "업로드가 거부되고 오류 가이드를 노출", "actual": ""}, default_screen=board_module),
+            _normalize_row({"화면": board_module, "구분": "회귀", "element": "댓글", "action": "댓글 작성/수정 후 새로고침하여 반영 상태를 확인한다", "expected": "저장 상태가 유지되고 중복 작성이 발생하지 않음", "actual": ""}, default_screen=board_module),
+        ])
+
     if include_auth:
         rows.append(
             _normalize_row({"화면": f"{screen}::접근제어", "구분": "권한", "element": "접근제어", "action": "비로그인/권한없는 사용자로 접근한다", "expected": "접근 차단 또는 로그인 유도", "actual": ""}, default_screen=screen)
         )
-    return rows[:20]
+    return rows[:40]
 
 
 def _rows_to_tsv(rows: List[Dict[str, str]]) -> str:

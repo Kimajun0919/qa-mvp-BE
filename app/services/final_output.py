@@ -94,12 +94,18 @@ def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
             shot = str(evidence.get("screenshotPath") or "").strip()
             url = str(evidence.get("observedUrl") or "").strip()
             status = str(evidence.get("httpStatus") or "").strip()
-            if shot or url or status:
+            kind = str(evidence.get("scenarioKind") or "").strip()
+            ts = str(evidence.get("timestamp") or "").strip()
+            if shot or url or status or kind or ts:
                 bits = []
                 if status:
                     bits.append(f"http={status}")
                 if url:
                     bits.append(f"url={url}")
+                if kind:
+                    bits.append(f"kind={kind}")
+                if ts:
+                    bits.append(f"ts={ts}")
                 if shot:
                     bits.append(f"shot={shot}")
                 evidence_ref = "|".join(bits)
@@ -123,11 +129,17 @@ def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
         shot = str(e.get("screenshotPath") or "").strip()
         url = str(e.get("observedUrl") or "").strip()
         status = str(e.get("httpStatus") or "").strip()
+        kind = str(e.get("scenarioKind") or "").strip()
+        ts = str(e.get("timestamp") or "").strip()
         bits = []
         if status:
             bits.append(f"http={status}")
         if url:
             bits.append(f"url={url}")
+        if kind:
+            bits.append(f"kind={kind}")
+        if ts:
+            bits.append(f"ts={ts}")
         if shot:
             bits.append(f"shot={shot}")
         evidence_ref = "|".join(bits)

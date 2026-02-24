@@ -28,7 +28,13 @@ class DensityAndFinalizeTests(unittest.TestCase):
                 "테스트시나리오": "폼 제출",
                 "실행결과": "FAIL",
                 "decompositionRows": [
-                    {"kind": "FIELD", "field": "https://example.com::폼", "action": "detect-surface", "assertion": {}, "evidence": {}},
+                    {
+                        "kind": "FIELD",
+                        "field": "https://example.com::폼",
+                        "action": "detect-surface",
+                        "assertion": {},
+                        "evidence": {"httpStatus": 200, "observedUrl": "https://example.com/form", "scenarioKind": "VALIDATION", "timestamp": 1700000000},
+                    },
                     {"kind": "ACTION", "field": "https://example.com::폼", "action": "submit-empty-form", "assertion": {}, "evidence": {}},
                 ],
             }
@@ -37,6 +43,24 @@ class DensityAndFinalizeTests(unittest.TestCase):
         note = rows[0].get("비고") or ""
         for token in ["field:", "action:", "assert:", "error:", "evidence:"]:
             self.assertIn(token, note)
+        self.assertIn("kind=VALIDATION", note)
+        self.assertIn("ts=1700000000", note)
+
+    def test_board_domain_density_has_board_core_rows(self):
+        out = asyncio.run(
+            generate_checklist(
+                screen="https://example.com/board",
+                context="게시판 목록/상세/작성",
+                include_auth=True,
+                provider="__no_llm__",
+                max_rows=40,
+            )
+        )
+        rows = out.get("rows") or []
+        self.assertGreaterEqual(len(rows), 14)
+        actions = "\n".join(str(r.get("action") or "") for r in rows)
+        for keyword in ["정렬", "검색", "페이지", "첨부", "댓글"]:
+            self.assertIn(keyword, actions)
 
     def test_execute_payload_server_safe_defaults(self):
         cfg = _extract_execute_payload({"rows": [{"화면": "https://example.com", "테스트시나리오": "렌더"}]})
