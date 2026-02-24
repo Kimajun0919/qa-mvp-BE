@@ -49,24 +49,148 @@ def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     return c
 
 
+def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
+    """Extract compact decomposition linkage refs from execution outputs.
+
+    Backward-compatible: if decomposition data is absent, returns empty refs.
+    """
+    rows = item.get("decompositionRows")
+    if not isinstance(rows, list):
+        rows = []
+
+    field_ref = ""
+    action_ref = ""
+    assertion_ref = ""
+    error_ref = ""
+    evidence_ref = ""
+
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        kind = str(r.get("kind") or "").upper().strip()
+        field = str(r.get("field") or "").strip()
+        action = str(r.get("action") or "").strip()
+        assertion = r.get("assertion") if isinstance(r.get("assertion"), dict) else {}
+        evidence = r.get("evidence") if isinstance(r.get("evidence"), dict) else {}
+
+        if (not field_ref) and field:
+            field_ref = field
+        if kind == "FIELD":
+            if field and not field_ref:
+                field_ref = field
+        elif kind == "ACTION":
+            if action and not action_ref:
+                action_ref = action
+        elif kind == "ASSERTION":
+            exp = str(assertion.get("expected") or "").strip()
+            obs = str(assertion.get("observed") or "").strip()
+            fc = str(assertion.get("failureCode") or "").strip()
+            if (exp or obs) and not assertion_ref:
+                assertion_ref = f"exp={exp or '-'}|obs={obs or '-'}"
+            if fc and fc != "OK" and not error_ref:
+                error_ref = fc
+
+        if not evidence_ref:
+            shot = str(evidence.get("screenshotPath") or "").strip()
+            url = str(evidence.get("observedUrl") or "").strip()
+            status = str(evidence.get("httpStatus") or "").strip()
+            if shot or url or status:
+                bits = []
+                if status:
+                    bits.append(f"http={status}")
+                if url:
+                    bits.append(f"url={url}")
+                if shot:
+                    bits.append(f"shot={shot}")
+                evidence_ref = "|".join(bits)
+
+    # fallback to failureDecomposition (legacy shape)
+    fd = item.get("failureDecomposition") if isinstance(item.get("failureDecomposition"), dict) else {}
+    if not field_ref:
+        field_ref = str(fd.get("field") or "").strip()
+    if not action_ref:
+        action_ref = str(fd.get("action") or "").strip()
+    if not assertion_ref:
+        a = fd.get("assertion") if isinstance(fd.get("assertion"), dict) else {}
+        exp = str(a.get("expected") or "").strip()
+        obs = str(a.get("observed") or "").strip()
+        if exp or obs:
+            assertion_ref = f"exp={exp or '-'}|obs={obs or '-'}"
+    if not error_ref:
+        error_ref = str(item.get("실패코드") or (fd.get("assertion") or {}).get("failureCode") or "").strip()
+    if not evidence_ref:
+        e = fd.get("evidence") if isinstance(fd.get("evidence"), dict) else {}
+        shot = str(e.get("screenshotPath") or "").strip()
+        url = str(e.get("observedUrl") or "").strip()
+        status = str(e.get("httpStatus") or "").strip()
+        bits = []
+        if status:
+            bits.append(f"http={status}")
+        if url:
+            bits.append(f"url={url}")
+        if shot:
+            bits.append(f"shot={shot}")
+        evidence_ref = "|".join(bits)
+
+    return {
+        "field": field_ref,
+        "action": action_ref,
+        "assertion": assertion_ref,
+        "error": error_ref,
+        "evidence": evidence_ref,
+    }
+
+
+def _with_decomposition_density(item: Dict[str, Any], detail: str, note: str) -> tuple[str, str]:
+    refs = _row_decomposition_refs(item)
+    ref_tokens = []
+    if refs.get("field"):
+        ref_tokens.append(f"field:{refs['field']}")
+    if refs.get("action"):
+        ref_tokens.append(f"action:{refs['action']}")
+    if refs.get("assertion"):
+        ref_tokens.append(f"assert:{refs['assertion']}")
+    if refs.get("error"):
+        ref_tokens.append(f"error:{refs['error']}")
+    if refs.get("evidence"):
+        ref_tokens.append(f"evidence:{refs['evidence']}")
+
+    if not ref_tokens:
+        return detail, note
+
+    enriched_detail = detail
+    if not enriched_detail:
+        enriched_detail = " / ".join(ref_tokens[:2])
+    elif "field:" not in enriched_detail and refs.get("field"):
+        enriched_detail = f"{enriched_detail} | field:{refs['field']}"
+
+    links = "decompRefs=" + " ; ".join(ref_tokens)
+    enriched_note = f"{note} | {links}" if note else links
+    return enriched_detail, enriched_note
+
+
 def _to_detail_rows(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     today = datetime.now().strftime("%y.%m.%d")
     out: List[Dict[str, Any]] = []
     for i, it in enumerate(items, start=1):
         raw_status = str(it.get("진행사항") or it.get("실행결과") or it.get("status") or "")
         status = _norm_status(raw_status)
+        detail = str(it.get("상세") or it.get("detail") or it.get("테스트시나리오") or "")
+        note = str(it.get("비고") or it.get("note") or "")
+        detail, note = _with_decomposition_density(it, detail, note)
+
         out.append(
             {
                 "NO": i,
                 "경로": str(it.get("경로") or it.get("path") or it.get("url") or ""),
                 "우선순위": str(it.get("우선순위") or it.get("priority") or ""),
-                "상세": str(it.get("상세") or it.get("detail") or it.get("테스트시나리오") or ""),
+                "상세": detail,
                 "진행사항": status,
                 "테스터": str(it.get("테스터") or it.get("tester") or "AUTO"),
                 "수정 요청일": str(it.get("수정 요청일") or it.get("requestedAt") or today),
                 "수정 완료일": str(it.get("수정 완료일") or it.get("fixedAt") or ""),
                 "수정 상태": str(it.get("수정 상태") or it.get("fixStatus") or ""),
-                "비고": str(it.get("비고") or it.get("note") or ""),
+                "비고": note,
             }
         )
     return out
