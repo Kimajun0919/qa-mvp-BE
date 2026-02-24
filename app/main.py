@@ -128,6 +128,55 @@ def _load_bundle(analysis_id: str) -> Dict[str, Any] | None:
     return db
 
 
+def _safe_unlink(path: str) -> bool:
+    p = Path(path or "")
+    if not p.exists() or not p.is_file():
+        return False
+    out_root = Path("out").resolve()
+    target = p.resolve()
+    if out_root == target or out_root not in target.parents:
+        return False
+    try:
+        p.unlink()
+        return True
+    except Exception:
+        return False
+
+
+def _cleanup_entities(analysis_ids: list[str], job_ids: list[str], artifact_paths: list[str] | None = None) -> Dict[str, Any]:
+    artifact_paths = artifact_paths or []
+    deleted_analysis = []
+    deleted_jobs = []
+    deleted_artifacts = []
+
+    for analysis_id in analysis_ids:
+        analysis_id = str(analysis_id or "").strip()
+        if not analysis_id:
+            continue
+        in_mem = native_analysis_store.pop(analysis_id, None) is not None
+        in_db = delete_bundle(analysis_id)
+        if in_mem or in_db:
+            deleted_analysis.append(analysis_id)
+
+    for job_id in job_ids:
+        job_id = str(job_id or "").strip()
+        if not job_id:
+            continue
+        if execute_jobs.pop(job_id, None) is not None:
+            deleted_jobs.append(job_id)
+
+    for path in artifact_paths:
+        ap = str(path or "").strip()
+        if ap and _safe_unlink(ap):
+            deleted_artifacts.append(ap)
+
+    return {
+        "analysisIds": deleted_analysis,
+        "jobIds": deleted_jobs,
+        "artifacts": deleted_artifacts,
+    }
+
+
 async def proxy_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     url = f"{NODE_API_BASE}{path}"
     try:
@@ -410,9 +459,8 @@ async def analysis_get(analysis_id: str) -> Dict[str, Any]:
 
 @app.delete("/api/analysis/{analysis_id}")
 async def analysis_delete(analysis_id: str) -> Dict[str, Any]:
-    deleted_in_memory = native_analysis_store.pop(analysis_id, None) is not None
-    deleted_in_db = delete_bundle(analysis_id)
-    return {"ok": True, "analysisId": analysis_id, "deleted": bool(deleted_in_memory or deleted_in_db)}
+    cleanup = _cleanup_entities([analysis_id], [])
+    return {"ok": True, "analysisId": analysis_id, "deleted": analysis_id in set(cleanup.get("analysisIds") or [])}
 
 
 @app.post("/api/flow-map")
@@ -719,8 +767,33 @@ async def checklist_execute_status(job_id: str) -> Dict[str, Any]:
 
 @app.delete("/api/checklist/execute/status/{job_id}")
 async def checklist_execute_status_delete(job_id: str) -> Dict[str, Any]:
-    existed = execute_jobs.pop(job_id, None) is not None
-    return {"ok": True, "jobId": job_id, "deleted": existed}
+    cleanup = _cleanup_entities([], [job_id])
+    return {"ok": True, "jobId": job_id, "deleted": job_id in set(cleanup.get("jobIds") or [])}
+
+
+@app.post("/api/cleanup/chain")
+async def cleanup_chain(req: Request) -> Dict[str, Any]:
+    payload = await _json_payload(req)
+    analysis_ids = payload.get("analysisIds") if isinstance(payload.get("analysisIds"), list) else []
+    job_ids = payload.get("jobIds") if isinstance(payload.get("jobIds"), list) else []
+    artifact_paths = payload.get("artifactPaths") if isinstance(payload.get("artifactPaths"), list) else []
+
+    cleaned = _cleanup_entities(analysis_ids, job_ids, artifact_paths=artifact_paths)
+    requested_analysis = [str(x or "").strip() for x in analysis_ids if str(x or "").strip()]
+    requested_jobs = [str(x or "").strip() for x in job_ids if str(x or "").strip()]
+    requested_artifacts = [str(x or "").strip() for x in artifact_paths if str(x or "").strip()]
+
+    residual = {
+        "analysisIds": [x for x in requested_analysis if x not in set(cleaned.get("analysisIds") or [])],
+        "jobIds": [x for x in requested_jobs if x not in set(cleaned.get("jobIds") or [])],
+        "artifactPaths": [x for x in requested_artifacts if x not in set(cleaned.get("artifacts") or [])],
+    }
+
+    return {
+        "ok": True,
+        "deleted": cleaned,
+        "residual": residual,
+    }
 
 
 @app.post("/api/checklist/execute/graph")
