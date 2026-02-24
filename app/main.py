@@ -564,6 +564,7 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "metrics": result.get("metrics") or {},
         "failureCodeHints": result.get("failureCodeHints") or {},
         "retryStats": result.get("retryStats") or {},
+        "chainStatuses": result.get("chainStatuses") or {},
         "loginUsed": result.get("loginUsed", False),
         "rows": result.get("rows"),
         "decompositionRows": result.get("decompositionRows") or [],
@@ -612,6 +613,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "ineligibleRows": 0,
                 "byClass": {"NONE": 0, "TRANSIENT": 0, "WEAK_SIGNAL": 0, "CONDITIONAL": 0, "NON_RETRYABLE": 0},
             }
+            merged_chain_statuses: Dict[str, str] = {}
             merged_metrics: Dict[str, Any] = {"completed_rows": 0, "target_rows": len(rows_all)}
 
             for i in range(0, len(rows_all), batch_size):
@@ -652,6 +654,11 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                         if isinstance(cls, str):
                             merged_retry_stats["byClass"][cls] = int(merged_retry_stats["byClass"].get(cls, 0)) + int(cnt or 0)
 
+                part_chain = part.get("chainStatuses") if isinstance(part.get("chainStatuses"), dict) else {}
+                for k, v in part_chain.items():
+                    if isinstance(k, str):
+                        merged_chain_statuses[k] = str(v or "")
+
                 part_metrics = part.get("metrics") if isinstance(part.get("metrics"), dict) else {}
                 merged_metrics["completed_rows"] += int(part_metrics.get("completed_rows") or len(part.get("rows") or []))
                 merged_metrics["target_rows"] = int(part_metrics.get("target_rows") or merged_metrics.get("target_rows") or len(rows_all))
@@ -676,6 +683,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "metrics": {"completed_rows": len(merged_rows), "target_rows": len(rows_all)},
                 "failureCodeHints": merged_hints,
                 "retryStats": merged_retry_stats,
+                "chainStatuses": merged_chain_statuses,
                 "rows": merged_rows,
                 "decompositionRows": merged_decomp_rows,
                 "finalSheet": final_sheet,

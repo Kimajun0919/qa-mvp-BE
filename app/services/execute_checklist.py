@@ -264,7 +264,31 @@ async def _collect_elements(page: Any) -> Dict[str, int]:
         return {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
 
 
-async def _run_one(page: Any, url: str, scenario: str, category: str = "") -> Tuple[str, str, Dict[str, Any], Dict[str, int]]:
+def _normalize_actor(row: Dict[str, Any]) -> str:
+    actor = str(row.get("Actor") or row.get("actor") or row.get("역할") or "USER").strip().upper()
+    return actor if actor in {"USER", "ADMIN"} else "USER"
+
+
+def _handoff_key(row: Dict[str, Any]) -> str:
+    return str(row.get("HandoffKey") or row.get("handoffKey") or row.get("연계키") or "").strip()
+
+
+def _aggregate_chain_status(statuses: List[str]) -> str:
+    normalized = [str(s or "").upper() for s in statuses if str(s or "").strip()]
+    if not normalized:
+        return ""
+    if any(s == "FAIL" for s in normalized):
+        return "FAIL"
+    if any(s == "BLOCKED" for s in normalized):
+        return "BLOCKED"
+    if any(s not in {"PASS", "PASS_WITH_WARNINGS"} for s in normalized):
+        return "BLOCKED"
+    if any(s == "PASS_WITH_WARNINGS" for s in normalized):
+        return "PASS_WITH_WARNINGS"
+    return "PASS"
+
+
+async def _run_one(page: Any, url: str, scenario: str, category: str = "", actor: str = "USER") -> Tuple[str, str, Dict[str, Any], Dict[str, int]]:
     meta: Dict[str, Any] = {"scenarioKind": _scenario_kind(scenario, category), "action": ""}
     elems: Dict[str, int] = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
     try:
@@ -329,8 +353,19 @@ async def _run_one(page: Any, url: str, scenario: str, category: str = "") -> Tu
 
         if kind == "INTERACTION":
             meta["action"] = "click-primary"
+            actor_norm = (actor or "USER").upper()
+            actor_selectors = [
+                "button", "a[href]", "[role='button']",
+            ]
+            if actor_norm == "ADMIN":
+                actor_selectors = [
+                    "button:has-text('저장')", "button:has-text('발행')", "button:has-text('승인')",
+                    "button:has-text('Save')", "button:has-text('Publish')", "button:has-text('Approve')",
+                    "button", "a[href]", "[role='button']",
+                ]
+            meta["actorRoute"] = actor_norm
             clicked = False
-            for sel in ["button", "a[href]", "[role='button']"]:
+            for sel in actor_selectors:
                 try:
                     loc = page.locator(sel).first
                     if await loc.count() > 0:
@@ -617,6 +652,9 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
         login_used = await _login_if_possible(page, auth)
 
         target_rows = (rows or [])[:max_rows]
+        chain_histories: Dict[str, List[str]] = {}
+        chain_last_meta: Dict[str, Dict[str, Any]] = {}
+
         for i, r in enumerate(target_rows, start=1):
             module = str(r.get("module") or r.get("화면") or "")
             url = _pick_url(module)
@@ -624,6 +662,8 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
             expected = str(r.get("expected") or "").strip()
             scenario = str(r.get("테스트시나리오") or "").strip() or (f"{action} - {expected}".strip(" -"))
             category = str(r.get("구분") or "")
+            actor = _normalize_actor(r)
+            handoff_key = _handoff_key(r)
 
             status = "BLOCKED"
             reason = "유효한 URL 없음"
@@ -631,7 +671,7 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
 
             elems = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
             if url.startswith("http://") or url.startswith("https://"):
-                status, reason, meta, elems = await _run_one(page, url, scenario, category)
+                status, reason, meta, elems = await _run_one(page, url, scenario, category, actor=actor)
 
             for k in coverage_totals.keys():
                 coverage_totals[k] += int(elems.get(k, 0) or 0)
@@ -667,6 +707,7 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
                 retry_stats["ineligibleRows"] = int(retry_stats.get("ineligibleRows", 0)) + 1
             if fail_code != "OK":
                 failure_code_hints[fail_code] = remediation_hint
+            previous_handoff = chain_last_meta.get(handoff_key, {}) if handoff_key else {}
             evidence_meta = {
                 "screenshotPath": evidence,
                 "observedUrl": meta.get("urlAfter") or url,
@@ -674,11 +715,16 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
                 "httpStatus": meta.get("httpStatus") or 0,
                 "scenarioKind": meta.get("scenarioKind") or _scenario_kind(scenario, category),
                 "timestamp": ts,
+                "Actor": actor,
+                "HandoffKey": handoff_key,
             }
 
             summary[status] = summary.get(status, 0) + 1
             nr = dict(r)
             nr["실행결과"] = status
+            nr["Actor"] = actor
+            nr["HandoffKey"] = handoff_key
+            nr["ChainStatus"] = status
             nr["증거"] = evidence
             nr["증거메타"] = evidence_meta
             nr["실패사유"] = reason
@@ -720,10 +766,35 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
             meta["retryEligible"] = retry_eligible
             nr["retryClass"] = retry_class
             nr["retryEligible"] = retry_eligible
+            if handoff_key:
+                nr["handoffMeta"] = {
+                    "hasPrevious": bool(previous_handoff),
+                    "previousActor": str(previous_handoff.get("Actor") or ""),
+                    "previousStatus": str(previous_handoff.get("status") or ""),
+                    "previousObservedUrl": str(previous_handoff.get("observedUrl") or ""),
+                }
+            meta["Actor"] = actor
+            meta["HandoffKey"] = handoff_key
             nr["실행메타"] = meta
             nr["요소통계"] = elems
             nr["실행시각"] = ts
+            if handoff_key:
+                chain_histories.setdefault(handoff_key, []).append(status)
+                chain_last_meta[handoff_key] = {
+                    "Actor": actor,
+                    "status": status,
+                    "observedUrl": str(meta.get("urlAfter") or url),
+                    "timestamp": ts,
+                }
             executed.append(nr)
+
+        chain_status_map = {k: _aggregate_chain_status(v) for k, v in chain_histories.items()}
+        for row in executed:
+            key = str(row.get("HandoffKey") or "").strip()
+            if key:
+                row["ChainStatus"] = chain_status_map.get(key, row.get("실행결과") or "")
+            else:
+                row["ChainStatus"] = str(row.get("실행결과") or row.get("ChainStatus") or "")
 
         probe_summary = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0}
         if exhaustive:
@@ -779,6 +850,7 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
         "loginUsed": login_used,
         "failureCodeHints": failure_code_hints,
         "retryStats": retry_stats,
+        "chainStatuses": {k: _aggregate_chain_status(v) for k, v in chain_histories.items()},
         "decompositionRows": atomic_rows,
         "decompositionRowsPath": str(atomic_path).replace("\\", "/") if str(atomic_path) else "",
     }

@@ -327,7 +327,7 @@ Response fields
 - `reason`: string
 - `columns`: 확장 컬럼 배열 (기본 호환 + 세분화)
   - 기본(호환): `화면`,`구분`,`테스트시나리오`,`확인`
-  - 세분화: `module`,`element`,`action`,`expected`,`actual`
+  - 세분화: `module`,`element`,`action`,`expected`,`actual`,`Actor`,`HandoffKey`,`ChainStatus`
 - `rows`: array
 - `tsv`: string
 - `expansion`: object (`enabled`, `modes`)
@@ -345,7 +345,10 @@ Row schema (backward compatible):
   "element": "로그인 버튼",
   "action": "유효한 계정으로 로그인 버튼을 클릭한다",
   "expected": "대시보드로 이동한다",
-  "actual": ""
+  "actual": "",
+  "Actor": "USER|ADMIN",
+  "HandoffKey": "optional-link-key",
+  "ChainStatus": "PASS|FAIL|BLOCKED|PASS_WITH_WARNINGS"
 }
 ```
 
@@ -451,6 +454,7 @@ Response fields
 - `loginUsed`: boolean
 - `failureCodeHints`: object (실패코드별 대응 가이드 매핑, 예: `{ "HTTP_ERROR": "..." }`)
 - `retryStats`: object (재시도 분류 집계)
+- `chainStatuses`: object (handoff key별 체인 집계 상태)
   - `eligibleRows`, `ineligibleRows`, `totalRows`, `retryRate`
   - `byClass`: `{ "NONE": n, "TRANSIENT": n, "WEAK_SIGNAL": n, "CONDITIONAL": n, "NON_RETRYABLE": n }`
 - `rows`: executed rows (`실행결과`,`증거`,`증거메타`,`실패사유`,`실패코드`,`실패대응가이드`,`remediationHint`,`실행메타`,`요소통계` 포함)

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Set
 from .llm import chat_json, parse_json_text
 
 BASE_COLUMNS = ["화면", "구분", "테스트시나리오", "확인"]
-GRANULAR_COLUMNS = ["module", "element", "action", "expected", "actual"]
+GRANULAR_COLUMNS = ["module", "element", "action", "expected", "actual", "Actor", "HandoffKey", "ChainStatus"]
 COLUMNS = BASE_COLUMNS + GRANULAR_COLUMNS
 EXPANSION_KEYS = {"field", "action", "assertion"}
 
@@ -37,6 +37,12 @@ def _normalize_row(row: Dict[str, Any], *, default_screen: str = "") -> Dict[str
     if expected and expected not in scenario:
         scenario = f"{scenario} - {expected}" if scenario else expected
 
+    actor = str(row.get("Actor") or row.get("actor") or row.get("역할") or "USER").strip().upper()
+    if actor not in {"USER", "ADMIN"}:
+        actor = "USER"
+    handoff_key = str(row.get("HandoffKey") or row.get("handoffKey") or row.get("연계키") or "").strip()
+    chain_status = str(row.get("ChainStatus") or row.get("chainStatus") or row.get("체인상태") or "").strip()
+
     return {
         # backward-compatible fields
         "화면": module,
@@ -49,6 +55,10 @@ def _normalize_row(row: Dict[str, Any], *, default_screen: str = "") -> Dict[str
         "action": action,
         "expected": expected,
         "actual": actual,
+        # interaction-linking metadata (additive, backward-compatible)
+        "Actor": actor,
+        "HandoffKey": handoff_key,
+        "ChainStatus": chain_status,
     }
 
 
