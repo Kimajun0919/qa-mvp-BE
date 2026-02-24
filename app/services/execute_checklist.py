@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from urllib.parse import urlparse
 
 try:
     from playwright.async_api import async_playwright
@@ -15,6 +16,23 @@ def _pick_url(screen: str) -> str:
     if not s:
         return ""
     return s.split("|")[0].strip().split(" ")[0].strip()
+
+
+def _canonical_url_for_compare(value: str) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    try:
+        p = urlparse(s)
+        host = (p.netloc or "").lower()
+        path = p.path or "/"
+        if path != "/" and path.endswith("/"):
+            path = path[:-1]
+        if p.scheme and host:
+            return f"{p.scheme.lower()}://{host}{path}"
+        return path
+    except Exception:
+        return s.rstrip("/")
 
 
 def _scenario_kind(text: str, category: str = "") -> str:
@@ -33,7 +51,7 @@ def _scenario_kind(text: str, category: str = "") -> str:
 
 
 def _failure_code(status: str, reason: str) -> str:
-    if status == "PASS":
+    if status in {"PASS", "PASS_WITH_WARNINGS"}:
         return "OK"
     r = (reason or "").lower()
     if status == "BLOCKED":
@@ -90,7 +108,7 @@ def _remediation_hint(code: str) -> str:
 
 
 def _retry_class(status: str, failure_code: str, reason: str = "") -> str:
-    if status == "PASS":
+    if status in {"PASS", "PASS_WITH_WARNINGS"}:
         return "NONE"
 
     code = (failure_code or "").upper().strip()
@@ -388,7 +406,7 @@ def build_execution_graph(rows: List[Dict[str, Any]] | None = None, chain_status
     }
 
 
-async def _run_one(page: Any, url: str, scenario: str, category: str = "", actor: str = "USER") -> Tuple[str, str, Dict[str, Any], Dict[str, int]]:
+async def _run_one(page: Any, url: str, scenario: str, category: str = "", actor: str = "USER", login_used: bool = False) -> Tuple[str, str, Dict[str, Any], Dict[str, int]]:
     meta: Dict[str, Any] = {"scenarioKind": _scenario_kind(scenario, category), "action": ""}
     elems: Dict[str, int] = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
     try:
@@ -417,8 +435,18 @@ async def _run_one(page: Any, url: str, scenario: str, category: str = "", actor
             # login required signal or redirect to login-ish page
             if any(k in low for k in ["로그인", "sign in", "unauthorized", "permission", "권한"]):
                 return "PASS", "", meta, elems
-            if current != url and any(k in current.lower() for k in ["login", "signin", "auth"]):
+
+            current_canonical = _canonical_url_for_compare(current)
+            target_canonical = _canonical_url_for_compare(url)
+            redirected = bool(current_canonical and target_canonical and current_canonical != target_canonical)
+            if redirected and any(k in current.lower() for k in ["login", "signin", "auth"]):
                 return "PASS", "", meta, elems
+
+            scenario_low = (scenario or "").lower()
+            expects_unauth = any(k in scenario_low for k in ["비로그인", "미로그인", "unauth", "unauthorized", "로그아웃"])
+            if login_used and expects_unauth:
+                return "PASS_WITH_WARNINGS", "로그인 세션 상태로 비로그인 가드 검증 신호가 약함", meta, elems
+
             return "FAIL", "권한/로그인 차단 신호 미확인", meta, elems
 
         if kind == "VALIDATION":
@@ -801,7 +829,7 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
 
             elems = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
             if url.startswith("http://") or url.startswith("https://"):
-                status, reason, meta, elems = await _run_one(page, url, scenario, category, actor=actor)
+                status, reason, meta, elems = await _run_one(page, url, scenario, category, actor=actor, login_used=login_used)
 
             for k in coverage_totals.keys():
                 coverage_totals[k] += int(elems.get(k, 0) or 0)

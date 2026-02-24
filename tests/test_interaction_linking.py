@@ -5,7 +5,7 @@ from app.services.checklist import _normalize_row, generate_checklist
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.execute_checklist import _aggregate_chain_status, _normalize_actor, build_execution_graph
+from app.services.execute_checklist import _aggregate_chain_status, _canonical_url_for_compare, _normalize_actor, _retry_class, _failure_code, build_execution_graph
 
 
 class InteractionLinkingTests(unittest.TestCase):
@@ -81,6 +81,16 @@ class InteractionLinkingTests(unittest.TestCase):
         self.assertEqual(_aggregate_chain_status(["PASS", "PASS"]), "PASS")
         self.assertEqual(_aggregate_chain_status(["PASS", "BLOCKED"]), "BLOCKED")
         self.assertEqual(_aggregate_chain_status(["PASS", "FAIL"]), "FAIL")
+
+    def test_canonical_url_compare_handles_mypage_trailing_slash_redirect(self):
+        self.assertEqual(
+            _canonical_url_for_compare("https://example.com/mypage"),
+            _canonical_url_for_compare("https://example.com/mypage/"),
+        )
+
+    def test_pass_with_warnings_treated_as_non_retryable_success(self):
+        self.assertEqual(_failure_code("PASS_WITH_WARNINGS", "guard mismatch"), "OK")
+        self.assertEqual(_retry_class("PASS_WITH_WARNINGS", "OK", "guard mismatch"), "NONE")
 
     def test_build_execution_graph_shape_from_rows(self):
         rows = [
