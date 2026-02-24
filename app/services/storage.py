@@ -13,6 +13,22 @@ DB_PATH = os.getenv("QA_FASTAPI_DB_PATH", "out/qa_fastapi.sqlite")
 _lock = threading.Lock()
 
 
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS analysis_bundle (
+          analysis_id TEXT PRIMARY KEY,
+          base_url TEXT NOT NULL,
+          pages_json TEXT NOT NULL,
+          elements_json TEXT NOT NULL,
+          candidates_json TEXT NOT NULL,
+          flows_json TEXT,
+          created_at INTEGER NOT NULL
+        )
+        """
+    )
+
+
 def _conn() -> sqlite3.Connection:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(DB_PATH)
@@ -24,19 +40,7 @@ def migrate() -> None:
     with _lock:
         conn = _conn()
         try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS analysis_bundle (
-                  analysis_id TEXT PRIMARY KEY,
-                  base_url TEXT NOT NULL,
-                  pages_json TEXT NOT NULL,
-                  elements_json TEXT NOT NULL,
-                  candidates_json TEXT NOT NULL,
-                  flows_json TEXT,
-                  created_at INTEGER NOT NULL
-                )
-                """
-            )
+            _ensure_schema(conn)
             conn.commit()
         finally:
             conn.close()
@@ -46,6 +50,7 @@ def save_analysis(analysis_id: str, base_url: str, pages: List[Dict[str, Any]], 
     with _lock:
         conn = _conn()
         try:
+            _ensure_schema(conn)
             conn.execute(
                 """
                 INSERT INTO analysis_bundle(analysis_id, base_url, pages_json, elements_json, candidates_json, flows_json, created_at)
@@ -75,6 +80,7 @@ def save_flows(analysis_id: str, flows: List[Dict[str, Any]]) -> bool:
     with _lock:
         conn = _conn()
         try:
+            _ensure_schema(conn)
             cur = conn.execute("UPDATE analysis_bundle SET flows_json=? WHERE analysis_id=?", (json.dumps(flows, ensure_ascii=False), analysis_id))
             conn.commit()
             return (cur.rowcount or 0) > 0
@@ -85,6 +91,7 @@ def save_flows(analysis_id: str, flows: List[Dict[str, Any]]) -> bool:
 def get_bundle(analysis_id: str) -> Optional[Dict[str, Any]]:
     conn = _conn()
     try:
+        _ensure_schema(conn)
         row = conn.execute("SELECT * FROM analysis_bundle WHERE analysis_id=?", (analysis_id,)).fetchone()
     finally:
         conn.close()
@@ -106,19 +113,7 @@ def delete_bundle(analysis_id: str) -> bool:
     with _lock:
         conn = _conn()
         try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS analysis_bundle (
-                  analysis_id TEXT PRIMARY KEY,
-                  base_url TEXT NOT NULL,
-                  pages_json TEXT NOT NULL,
-                  elements_json TEXT NOT NULL,
-                  candidates_json TEXT NOT NULL,
-                  flows_json TEXT,
-                  created_at INTEGER NOT NULL
-                )
-                """
-            )
+            _ensure_schema(conn)
             cur = conn.execute("DELETE FROM analysis_bundle WHERE analysis_id=?", (analysis_id,))
             conn.commit()
             return (cur.rowcount or 0) > 0

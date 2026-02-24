@@ -6,7 +6,20 @@ from typing import Any, Dict, List
 
 import xlsxwriter
 
-FIX_COLUMNS = ["경로", "우선순위", "문제상세내용", "진행사항", "테스터", "수정 요청일"]
+FIX_COLUMNS = [
+    "경로",
+    "우선순위",
+    "문제상세내용",
+    "진행사항",
+    "테스터",
+    "수정 요청일",
+    "Actor",
+    "HandoffKey",
+    "ChainStatus",
+    "ErrorCode",
+    "Evidence",
+    "Completeness",
+]
 
 
 def _ensure_dirs() -> None:
@@ -38,18 +51,82 @@ def write_html_summary(run_id: str, summary: Dict[str, Any], flow_summary: List[
     return str(p).replace('\\', '/')
 
 
+def _pick_path(issue: Dict[str, Any]) -> str:
+    evidence_meta = issue.get("증거메타") if isinstance(issue.get("증거메타"), dict) else {}
+    return str(
+        issue.get("path")
+        or issue.get("url")
+        or issue.get("module")
+        or evidence_meta.get("observedUrl")
+        or ""
+    )
+
+
+def _pick_actor(issue: Dict[str, Any]) -> str:
+    actor = str(issue.get("Actor") or issue.get("actor") or issue.get("역할") or "").strip().upper()
+    return actor if actor in {"USER", "ADMIN"} else "USER"
+
+
+def _pick_handoff_key(issue: Dict[str, Any]) -> str:
+    return str(issue.get("HandoffKey") or issue.get("handoffKey") or issue.get("연계키") or "").strip()
+
+
+def _pick_chain_status(issue: Dict[str, Any]) -> str:
+    status = str(issue.get("ChainStatus") or issue.get("chainStatus") or issue.get("실행결과") or issue.get("status") or "").strip().upper()
+    return status or "FAIL"
+
+
+def _pick_error_code(issue: Dict[str, Any]) -> str:
+    return str(issue.get("실패코드") or issue.get("failureCode") or issue.get("errorCode") or "ASSERT_UNKNOWN").strip()
+
+
+def _pick_evidence(issue: Dict[str, Any]) -> str:
+    evidence_meta = issue.get("증거메타") if isinstance(issue.get("증거메타"), dict) else {}
+    raw = str(issue.get("증거") or issue.get("screenshotPath") or evidence_meta.get("screenshotPath") or "").strip()
+    if raw:
+        return raw
+    observed_url = str(evidence_meta.get("observedUrl") or "").strip()
+    return observed_url
+
+
+def _completeness(actor: str, handoff_key: str, chain_status: str, error_code: str, evidence: str) -> str:
+    missing: List[str] = []
+    if not actor:
+        missing.append("Actor")
+    if not handoff_key:
+        missing.append("HandoffKey")
+    if not chain_status:
+        missing.append("ChainStatus")
+    if not error_code:
+        missing.append("ErrorCode")
+    if not evidence:
+        missing.append("Evidence")
+    return "OK" if not missing else f"MISSING:{'|'.join(missing)}"
+
+
 def build_fix_rows(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     today = datetime.now().strftime("%Y-%m-%d")
     out: List[Dict[str, Any]] = []
     for i in issues:
+        actor = _pick_actor(i)
+        handoff_key = _pick_handoff_key(i)
+        chain_status = _pick_chain_status(i)
+        error_code = _pick_error_code(i)
+        evidence = _pick_evidence(i)
         out.append(
             {
-                "경로": str(i.get("path") or i.get("url") or ""),
-                "우선순위": str(i.get("severity") or "P2"),
-                "문제상세내용": str(i.get("actual") or i.get("detail") or ""),
+                "경로": _pick_path(i),
+                "우선순위": str(i.get("severity") or i.get("우선순위") or "P2"),
+                "문제상세내용": str(i.get("actual") or i.get("detail") or i.get("테스트시나리오") or ""),
                 "진행사항": "수정 필요",
-                "테스터": "AUTO",
-                "수정 요청일": str(i.get("executedAt") or today)[:10],
+                "테스터": str(i.get("tester") or i.get("테스터") or "AUTO"),
+                "수정 요청일": str(i.get("executedAt") or i.get("수정 요청일") or today)[:10],
+                "Actor": actor,
+                "HandoffKey": handoff_key,
+                "ChainStatus": chain_status,
+                "ErrorCode": error_code,
+                "Evidence": evidence,
+                "Completeness": _completeness(actor, handoff_key, chain_status, error_code, evidence),
             }
         )
     return out
@@ -63,9 +140,9 @@ def write_fix_sheet(run_id: str, issues: List[Dict[str, Any]]) -> Dict[str, str]
     # CSV
     csv_path = str(base.with_suffix('.csv')).replace('\\', '/')
     with open(csv_path, "w", encoding="utf-8") as f:
-      f.write(",".join(FIX_COLUMNS) + "\n")
-      for r in rows:
-        f.write(",".join(str(r.get(c, "")).replace(",", " ") for c in FIX_COLUMNS) + "\n")
+        f.write(",".join(FIX_COLUMNS) + "\n")
+        for r in rows:
+            f.write(",".join(str(r.get(c, "")).replace(",", " ") for c in FIX_COLUMNS) + "\n")
 
     # XLSX
     xlsx_path = str(base.with_suffix('.xlsx')).replace('\\', '/')
