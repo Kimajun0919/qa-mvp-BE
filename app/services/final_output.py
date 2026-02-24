@@ -50,9 +50,11 @@ def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
-    """Extract compact decomposition linkage refs from execution outputs.
+    """Extract compact decomposition refs with strict atomicity preference.
 
-    Backward-compatible: if decomposition data is absent, returns empty refs.
+    Preferred source (strict): a single VALIDATION_POINT row containing
+    field/action/assertion/error/evidence.
+    Backward-compatible with legacy FIELD/ACTION/ASSERTION split rows.
     """
     rows = item.get("decompositionRows")
     if not isinstance(rows, list):
@@ -70,55 +72,57 @@ def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
     for r in rows:
         if not isinstance(r, dict):
             continue
-        kind = str(r.get("kind") or "").upper().strip()
+        row_kind = str(r.get("kind") or "").upper().strip()
         field = str(r.get("field") or "").strip()
         action = str(r.get("action") or "").strip()
         assertion = r.get("assertion") if isinstance(r.get("assertion"), dict) else {}
+        error = r.get("error") if isinstance(r.get("error"), dict) else {}
         evidence = r.get("evidence") if isinstance(r.get("evidence"), dict) else {}
 
         if not actor_ref:
-            actor_ref = str(r.get("Actor") or r.get("actor") or "").strip()
+            actor_ref = str(r.get("actor") or r.get("Actor") or "").strip()
         if not handoff_ref:
-            handoff_ref = str(r.get("HandoffKey") or r.get("handoffKey") or "").strip()
+            handoff_ref = str(r.get("handoff") or r.get("HandoffKey") or r.get("handoffKey") or "").strip()
         if not chain_ref:
-            chain_ref = str(r.get("ChainStatus") or r.get("chainStatus") or "").strip()
+            chain_ref = str(r.get("chain") or r.get("ChainStatus") or r.get("chainStatus") or "").strip()
 
-        if (not field_ref) and field:
+        if not field_ref and field:
             field_ref = field
-        if kind == "FIELD":
-            if field and not field_ref:
-                field_ref = field
-        elif kind == "ACTION":
-            if action and not action_ref:
-                action_ref = action
-        elif kind == "ASSERTION":
-            exp = str(assertion.get("expected") or "").strip()
-            obs = str(assertion.get("observed") or "").strip()
-            fc = str(assertion.get("failureCode") or "").strip()
-            if (exp or obs) and not assertion_ref:
-                assertion_ref = f"exp={exp or '-'}|obs={obs or '-'}"
-            if fc and fc != "OK" and not error_ref:
-                error_ref = fc
+        if not action_ref and action:
+            action_ref = action
+
+        exp = str(assertion.get("expected") or "").strip()
+        obs = str(assertion.get("observed") or "").strip()
+        if (exp or obs) and not assertion_ref:
+            assertion_ref = f"exp={exp or '-'}|obs={obs or '-'}"
+
+        err_code = str(error.get("code") or assertion.get("failureCode") or "").strip()
+        if err_code and err_code != "OK" and not error_ref:
+            error_ref = err_code
 
         if not evidence_ref:
             shot = str(evidence.get("screenshotPath") or "").strip()
             url = str(evidence.get("observedUrl") or "").strip()
             status = str(evidence.get("httpStatus") or "").strip()
-            kind = str(evidence.get("scenarioKind") or "").strip()
+            scenario_kind = str(evidence.get("scenarioKind") or "").strip()
             ts = str(evidence.get("timestamp") or "").strip()
-            if shot or url or status or kind or ts:
+            if shot or url or status or scenario_kind or ts:
                 bits = []
                 if status:
                     bits.append(f"http={status}")
                 if url:
                     bits.append(f"url={url}")
-                if kind:
-                    bits.append(f"kind={kind}")
+                if scenario_kind:
+                    bits.append(f"kind={scenario_kind}")
                 if ts:
                     bits.append(f"ts={ts}")
                 if shot:
                     bits.append(f"shot={shot}")
                 evidence_ref = "|".join(bits)
+
+        # strict mode is one row per validation point; stop after first complete row
+        if row_kind == "VALIDATION_POINT" and field_ref and action_ref and assertion_ref:
+            break
 
     # fallback to failureDecomposition (legacy shape)
     fd = item.get("failureDecomposition") if isinstance(item.get("failureDecomposition"), dict) else {}

@@ -18,6 +18,7 @@ FIX_COLUMNS = [
     "ChainStatus",
     "ErrorCode",
     "Evidence",
+    "ValidationPoint",
     "Completeness",
 ]
 
@@ -89,7 +90,45 @@ def _pick_evidence(issue: Dict[str, Any]) -> str:
     return observed_url
 
 
-def _completeness(actor: str, handoff_key: str, chain_status: str, error_code: str, evidence: str) -> str:
+def _pick_atomic_validation_point(issue: Dict[str, Any]) -> Dict[str, str]:
+    """Return one normalized validation-point reference per issue row.
+
+    Enforcement rule: one fix row must map to exactly one validation point.
+    Prefer first VALIDATION_POINT row; fallback to first decomposition row; then
+    failureDecomposition/top-level fields for backward compatibility.
+    """
+    rows = issue.get("decompositionRows") if isinstance(issue.get("decompositionRows"), list) else []
+
+    selected: Dict[str, Any] = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        if str(r.get("kind") or "").upper().strip() == "VALIDATION_POINT":
+            selected = r
+            break
+    if not selected and rows and isinstance(rows[0], dict):
+        selected = rows[0]
+
+    field = str(selected.get("field") or "").strip()
+    action = str(selected.get("action") or "").strip()
+    assertion = selected.get("assertion") if isinstance(selected.get("assertion"), dict) else {}
+    expected = str(assertion.get("expected") or "").strip()
+    observed = str(assertion.get("observed") or "").strip()
+
+    if not field or not action or not (expected or observed):
+        fd = issue.get("failureDecomposition") if isinstance(issue.get("failureDecomposition"), dict) else {}
+        field = field or str(fd.get("field") or issue.get("element") or issue.get("module") or issue.get("화면") or "").strip()
+        action = action or str(fd.get("action") or issue.get("action") or issue.get("테스트시나리오") or "").strip()
+        a = fd.get("assertion") if isinstance(fd.get("assertion"), dict) else {}
+        expected = expected or str(a.get("expected") or issue.get("expected") or issue.get("확인") or "").strip()
+        observed = observed or str(a.get("observed") or issue.get("actual") or issue.get("실패사유") or "").strip()
+
+    assert_ref = f"exp={expected or '-'}|obs={observed or '-'}"
+    vp = f"field:{field or '-'} ; action:{action or '-'} ; assert:{assert_ref}"
+    return {"field": field, "action": action, "assertion": assert_ref, "ref": vp}
+
+
+def _completeness(actor: str, handoff_key: str, chain_status: str, error_code: str, evidence: str, validation_point: str) -> str:
     missing: List[str] = []
     if not actor:
         missing.append("Actor")
@@ -101,6 +140,8 @@ def _completeness(actor: str, handoff_key: str, chain_status: str, error_code: s
         missing.append("ErrorCode")
     if not evidence:
         missing.append("Evidence")
+    if not validation_point:
+        missing.append("ValidationPoint")
     return "OK" if not missing else f"MISSING:{'|'.join(missing)}"
 
 
@@ -113,11 +154,17 @@ def build_fix_rows(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         chain_status = _pick_chain_status(i)
         error_code = _pick_error_code(i)
         evidence = _pick_evidence(i)
+        vp = _pick_atomic_validation_point(i)
+        detail = str(i.get("actual") or i.get("detail") or i.get("테스트시나리오") or "").strip()
+        if detail:
+            detail = f"{detail} | {vp['ref']}"
+        else:
+            detail = vp["ref"]
         out.append(
             {
                 "경로": _pick_path(i),
                 "우선순위": str(i.get("severity") or i.get("우선순위") or "P2"),
-                "문제상세내용": str(i.get("actual") or i.get("detail") or i.get("테스트시나리오") or ""),
+                "문제상세내용": detail,
                 "진행사항": "수정 필요",
                 "테스터": str(i.get("tester") or i.get("테스터") or "AUTO"),
                 "수정 요청일": str(i.get("executedAt") or i.get("수정 요청일") or today)[:10],
@@ -126,7 +173,8 @@ def build_fix_rows(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "ChainStatus": chain_status,
                 "ErrorCode": error_code,
                 "Evidence": evidence,
-                "Completeness": _completeness(actor, handoff_key, chain_status, error_code, evidence),
+                "ValidationPoint": vp["ref"],
+                "Completeness": _completeness(actor, handoff_key, chain_status, error_code, evidence, vp["ref"]),
             }
         )
     return out

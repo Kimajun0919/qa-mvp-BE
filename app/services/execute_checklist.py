@@ -179,10 +179,10 @@ def _atomic_decomposition_rows(
     elems: Dict[str, int],
     evidence_meta: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    """Create execution-time atomic decomposition rows (field/action/assertion).
+    """Create strict atomic decomposition rows.
 
-    This is intentionally execution-driven (uses observed meta/elems/evidence),
-    not schema-only decomposition.
+    Rule: one parent checklist row -> one validation point row only.
+    Each row must expose field/action/assertion/error/evidence explicitly.
     """
     base = _failure_decomposition(
         row=row,
@@ -194,53 +194,37 @@ def _atomic_decomposition_rows(
         evidence_meta=evidence_meta,
     )
 
-    field = str(base.get("field") or "").strip()
-    action = str(base.get("action") or "").strip()
+    field = str(base.get("field") or row.get("module") or row.get("화면") or "").strip()
+    expected_action = str(base.get("action") or "").strip()
     observed_action = str(meta.get("action") or "").strip()
     expected = str((base.get("assertion") or {}).get("expected") or "").strip()
     observed = str((base.get("assertion") or {}).get("observed") or "").strip()
 
-    signal_surface = int(elems.get("buttons", 0) or 0) + int(elems.get("links", 0) or 0) + int(elems.get("forms", 0) or 0)
+    passed = status == "PASS"
+    err_code = str(failure_code or ("OK" if passed else "ASSERTION_FAILED")).strip()
+    err_reason = str(reason or "").strip()
 
-    rows: List[Dict[str, Any]] = [
-        {
-            "kind": "FIELD",
-            "field": field or str(row.get("module") or row.get("화면") or ""),
-            "action": "detect-surface",
-            "assertion": {
-                "expected": "field/surface should exist",
-                "observed": f"surface={signal_surface}",
-                "pass": signal_surface > 0,
-                "failureCode": "OK" if signal_surface > 0 else "ASSERT_INTERACTION_SURFACE_LOW",
-            },
-            "evidence": base.get("evidence"),
+    row_out = {
+        "kind": "VALIDATION_POINT",
+        "field": field,
+        "action": observed_action or expected_action or "no-observed-action",
+        "assertion": {
+            "expected": expected or "assertion should hold",
+            "observed": observed or ("pass" if passed else "failed"),
+            "pass": passed,
+            # kept for backward compatibility with existing parsers
+            "failureCode": err_code,
         },
-        {
-            "kind": "ACTION",
-            "field": field,
-            "action": observed_action or "no-observed-action",
-            "assertion": {
-                "expected": action or "action should be executable",
-                "observed": observed_action or "not-executed",
-                "pass": bool(observed_action),
-                "failureCode": "OK" if observed_action else "BLOCKED_RUNTIME",
-            },
-            "evidence": base.get("evidence"),
+        "error": {
+            "code": err_code,
+            "reason": err_reason,
         },
-        {
-            "kind": "ASSERTION",
-            "field": field,
-            "action": observed_action or action,
-            "assertion": {
-                "expected": expected,
-                "observed": observed,
-                "pass": status == "PASS",
-                "failureCode": failure_code,
-            },
-            "evidence": base.get("evidence"),
-        },
-    ]
-    return rows
+        "evidence": base.get("evidence"),
+        "actor": str(row.get("Actor") or row.get("actor") or row.get("역할") or "").strip(),
+        "handoff": str(row.get("HandoffKey") or row.get("handoffKey") or row.get("연계키") or "").strip(),
+        "chain": str(row.get("ChainStatus") or row.get("chainStatus") or row.get("체인상태") or status or "").strip(),
+    }
+    return [row_out]
 
 
 async def _login_if_possible(page: Any, auth: Dict[str, Any]) -> bool:

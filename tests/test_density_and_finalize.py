@@ -3,6 +3,7 @@ import unittest
 
 from app.services.checklist import _detect_feature_families, generate_checklist
 from app.services.final_output import _to_detail_rows
+from app.services.execute_checklist import _atomic_decomposition_rows
 from app.main import _extract_execute_payload
 
 
@@ -72,6 +73,51 @@ class DensityAndFinalizeTests(unittest.TestCase):
         self.assertIn("actor:ADMIN", note)
         self.assertIn("handoff:auth-flow-1", note)
         self.assertIn("chain:FAIL", note)
+
+    def test_strict_atomic_decomposition_is_single_validation_point(self):
+        rows = _atomic_decomposition_rows(
+            row={"module": "https://example.com::로그인", "action": "submit"},
+            status="FAIL",
+            reason="assert mismatch",
+            failure_code="ASSERT_TEXT_MISMATCH",
+            meta={"action": "click-submit", "urlAfter": "https://example.com/login", "httpStatus": 200, "scenarioKind": "AUTH"},
+            elems={"buttons": 1, "links": 0, "forms": 1},
+            evidence_meta={"timestamp": 1700000001, "screenshotPath": "out/login.png"},
+        )
+        self.assertEqual(len(rows), 1)
+        one = rows[0]
+        self.assertEqual(one.get("kind"), "VALIDATION_POINT")
+        self.assertIn("field", one)
+        self.assertIn("action", one)
+        self.assertIn("assertion", one)
+        self.assertIn("error", one)
+        self.assertIn("evidence", one)
+        self.assertEqual((one.get("error") or {}).get("code"), "ASSERT_TEXT_MISMATCH")
+
+    def test_finalize_prefers_strict_validation_point_refs(self):
+        items = [
+            {
+                "테스트시나리오": "로그인 실패 메시지",
+                "실행결과": "FAIL",
+                "decompositionRows": [
+                    {
+                        "kind": "VALIDATION_POINT",
+                        "field": "https://example.com::로그인",
+                        "action": "click-submit",
+                        "assertion": {"expected": "오류 메시지 표시", "observed": "표시 안됨", "pass": False, "failureCode": "ASSERT_TEXT_MISMATCH"},
+                        "error": {"code": "ASSERT_TEXT_MISMATCH", "reason": "message missing"},
+                        "evidence": {"httpStatus": 200, "observedUrl": "https://example.com/login", "scenarioKind": "AUTH", "timestamp": 1700000001},
+                    }
+                ],
+            }
+        ]
+        rows = _to_detail_rows(items)
+        note = rows[0].get("비고") or ""
+        self.assertIn("field:https://example.com::로그인", note)
+        self.assertIn("action:click-submit", note)
+        self.assertIn("assert:exp=오류 메시지 표시|obs=표시 안됨", note)
+        self.assertIn("error:ASSERT_TEXT_MISMATCH", note)
+        self.assertIn("kind=AUTH", note)
 
     def test_board_domain_density_has_board_core_rows(self):
         out = asyncio.run(
