@@ -178,7 +178,7 @@ def _atomic_decomposition_rows(
 
     field = str(base.get("field") or "").strip()
     action = str(base.get("action") or "").strip()
-    observed_action = str(meta.get("action") or action or "").strip()
+    observed_action = str(meta.get("action") or "").strip()
     expected = str((base.get("assertion") or {}).get("expected") or "").strip()
     observed = str((base.get("assertion") or {}).get("observed") or "").strip()
 

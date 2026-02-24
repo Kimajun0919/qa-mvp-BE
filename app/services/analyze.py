@@ -419,7 +419,7 @@ def _looks_flow_like_name(name: str) -> bool:
         "support",
         "smoke",
     ]
-    return any(re.search(rf"\\b{re.escape(t)}\\b", low) for t in flow_tokens)
+    return any(re.search(rf"\b{re.escape(t)}\b", low) for t in flow_tokens)
 
 
 def _write_analysis_reports(analysis_id: str, pages: List[PageInfo], menu_rows: List[Dict[str, Any]], metrics: Dict[str, Any]) -> Dict[str, str]:
