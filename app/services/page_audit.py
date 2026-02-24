@@ -167,9 +167,15 @@ async def auto_checklist_from_sitemap(
         )
         rows = chk.get("rows") or []
 
-        # normalize screen column to absolute URL + attach evidence path
+        # normalize screen/module to absolute URL + section + attach evidence path
         for r in rows:
-            r["화면"] = full_url
+            module = str(r.get("module") or r.get("화면") or full_url).strip() or full_url
+            if module.startswith("http://") or module.startswith("https://"):
+                normalized_module = module
+            else:
+                normalized_module = f"{full_url}::{module.split('::')[-1]}" if "::" in module else full_url
+            r["module"] = normalized_module
+            r["화면"] = normalized_module
             if "비고" not in r:
                 r["비고"] = ""
             note = f"evidence:{snap.get('screenshotPath','')}"
@@ -187,36 +193,33 @@ async def auto_checklist_from_sitemap(
             }
         )
 
-    # merge into single checklist (site-level): same 구분+시나리오 rows are unified
+    # merge into single checklist (site-level) while preserving section-level density
     merged_map: Dict[str, Dict[str, Any]] = {}
     for r in merged_rows:
-        scenario = str(r.get("테스트시나리오") or "").strip()
+        module = str(r.get("module") or r.get("화면") or "").strip()
+        element = str(r.get("element") or "").strip()
+        action = str(r.get("action") or r.get("테스트시나리오") or "").strip()
+        expected = str(r.get("expected") or r.get("확인") or "").strip()
         category = str(r.get("구분") or "").strip()
-        if not scenario:
+        if not action:
             continue
-        key = f"{category}::{scenario}"
-        current = merged_map.get(key)
-        src_url = str(r.get("화면") or "").strip()
-        if current is None:
-            merged_map[key] = {
-                "화면": src_url,
-                "구분": category,
-                "테스트시나리오": scenario,
-                "확인": str(r.get("확인") or ""),
-                "_urls": [src_url] if src_url else [],
-            }
-        else:
-            if src_url and src_url not in current["_urls"]:
-                current["_urls"].append(src_url)
+        key = f"{module}::{element}::{category}::{action}::{expected}"
+        if key in merged_map:
+            continue
+        merged_map[key] = {
+            "화면": module,
+            "module": module,
+            "element": element,
+            "구분": category,
+            "action": action,
+            "expected": expected,
+            "actual": str(r.get("actual") or ""),
+            "테스트시나리오": str(r.get("테스트시나리오") or action),
+            "확인": str(r.get("확인") or expected),
+            "비고": str(r.get("비고") or ""),
+        }
 
-    dedup: List[Dict[str, Any]] = []
-    for _, row in sorted(merged_map.items(), key=lambda kv: kv[0]):
-        urls = row.pop("_urls", [])
-        if isinstance(urls, list) and urls:
-            preview = urls[:3]
-            suffix = f" (+{len(urls)-3})" if len(urls) > 3 else ""
-            row["화면"] = " | ".join(preview) + suffix
-        dedup.append(row)
+    dedup: List[Dict[str, Any]] = [v for _, v in sorted(merged_map.items(), key=lambda kv: kv[0])]
 
     return {
         "ok": True,

@@ -526,15 +526,16 @@ def _extract_execute_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     rows = payload.get("rows") or []
     if not isinstance(rows, list) or not rows:
         raise HTTPException(status_code=400, detail={"ok": False, "error": "rows required"})
+    max_rows = max(1, min(int(payload.get("maxRows", 20) or 20), 80))
     return {
         "rows": rows,
-        "max_rows": int(payload.get("maxRows", 20) or 20),
+        "max_rows": max_rows,
         "auth": payload.get("auth") if isinstance(payload.get("auth"), dict) else {},
         "exhaustive": bool(payload.get("exhaustive", False)),
-        "exhaustive_clicks": int(payload.get("exhaustiveClicks", 12) or 12),
-        "exhaustive_inputs": int(payload.get("exhaustiveInputs", 12) or 12),
-        "exhaustive_depth": int(payload.get("exhaustiveDepth", 1) or 1),
-        "exhaustive_budget_ms": int(payload.get("exhaustiveBudgetMs", 20000) or 20000),
+        "exhaustive_clicks": max(1, min(int(payload.get("exhaustiveClicks", 12) or 12), 16)),
+        "exhaustive_inputs": max(1, min(int(payload.get("exhaustiveInputs", 12) or 12), 16)),
+        "exhaustive_depth": max(1, min(int(payload.get("exhaustiveDepth", 1) or 1), 2)),
+        "exhaustive_budget_ms": max(3000, min(int(payload.get("exhaustiveBudgetMs", 20000) or 20000), 30000)),
         "allow_risky_actions": bool(payload.get("allowRiskyActions", False)),
         "run_id": str(payload.get("runId", "")).strip() or f"exec_{int(time.time()*1000)}",
         "project_name": str(payload.get("projectName", "QA 테스트시트")).strip(),
@@ -584,7 +585,7 @@ async def checklist_execute(req: Request) -> Dict[str, Any]:
 async def checklist_execute_async(req: Request) -> Dict[str, Any]:
     payload = await _json_payload(req)
     cfg = _extract_execute_payload(payload)
-    batch_size = max(1, int(payload.get("batchSize", 20) or 20))
+    batch_size = max(1, min(int(payload.get("batchSize", 5) or 5), 8))
     job_id = f"job_{uuid4().hex[:12]}"
     total_rows = len(cfg.get("rows") or [])
     execute_jobs[job_id] = {

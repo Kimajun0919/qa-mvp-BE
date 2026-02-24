@@ -132,17 +132,33 @@ def _expand_rows(rows: List[Dict[str, str]], expansion: Set[str], max_rows: int)
     return expanded or rows[:max_rows]
 
 
+def _screen_sections(screen: str, context: str = "") -> List[str]:
+    low = f"{screen} {context}".lower()
+    sections: List[str] = ["헤더", "메인콘텐츠", "푸터"]
+    if any(k in low for k in ["form", "input", "회원", "로그인", "신청", "입력"]):
+        sections.append("폼영역")
+    if any(k in low for k in ["table", "list", "목록", "게시", "card"]):
+        sections.append("목록영역")
+    if any(k in low for k in ["modal", "dialog", "popup", "모달"]):
+        sections.append("모달영역")
+    return sections
+
+
 def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) -> List[Dict[str, str]]:
-    rows: List[Dict[str, str]] = [
-        _normalize_row({"화면": screen, "구분": "퍼블리싱", "action": context or "UI 요소 렌더링 및 정렬 점검", "expected": "레이아웃 깨짐/겹침 없이 노출", "actual": ""}, default_screen=screen),
-        _normalize_row({"화면": screen, "구분": "기능", "action": "주요 버튼/링크를 클릭한다", "expected": "의도한 화면 또는 상태로 전환", "actual": ""}, default_screen=screen),
-        _normalize_row({"화면": screen, "구분": "예외", "action": "필수값을 비우거나 잘못된 입력으로 제출한다", "expected": "유효성 오류가 노출되고 제출 차단", "actual": ""}, default_screen=screen),
-    ]
+    rows: List[Dict[str, str]] = []
+    for section in _screen_sections(screen, context):
+        module = f"{screen}::{section}"
+        rows.extend([
+            _normalize_row({"화면": module, "구분": "퍼블리싱", "element": section, "action": f"{section} UI 렌더링/정렬을 점검한다", "expected": "레이아웃 깨짐/겹침 없이 노출", "actual": ""}, default_screen=module),
+            _normalize_row({"화면": module, "구분": "기능", "element": section, "action": f"{section}의 주요 버튼/링크를 클릭한다", "expected": "의도한 화면 또는 상태로 전환", "actual": ""}, default_screen=module),
+            _normalize_row({"화면": module, "구분": "예외", "element": section, "action": f"{section}에서 필수값 누락 또는 잘못된 입력으로 제출한다", "expected": "유효성 오류가 노출되고 제출 차단", "actual": ""}, default_screen=module),
+        ])
+
     if include_auth:
         rows.append(
-            _normalize_row({"화면": screen, "구분": "권한", "action": "비로그인/권한없는 사용자로 접근한다", "expected": "접근 차단 또는 로그인 유도", "actual": ""}, default_screen=screen)
+            _normalize_row({"화면": f"{screen}::접근제어", "구분": "권한", "element": "접근제어", "action": "비로그인/권한없는 사용자로 접근한다", "expected": "접근 차단 또는 로그인 유도", "actual": ""}, default_screen=screen)
         )
-    return rows
+    return rows[:20]
 
 
 def _rows_to_tsv(rows: List[Dict[str, str]]) -> str:

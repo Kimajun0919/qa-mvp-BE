@@ -143,26 +143,27 @@ def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
 
 def _with_decomposition_density(item: Dict[str, Any], detail: str, note: str) -> tuple[str, str]:
     refs = _row_decomposition_refs(item)
-    ref_tokens = []
-    if refs.get("field"):
-        ref_tokens.append(f"field:{refs['field']}")
-    if refs.get("action"):
-        ref_tokens.append(f"action:{refs['action']}")
-    if refs.get("assertion"):
-        ref_tokens.append(f"assert:{refs['assertion']}")
-    if refs.get("error"):
-        ref_tokens.append(f"error:{refs['error']}")
-    if refs.get("evidence"):
-        ref_tokens.append(f"evidence:{refs['evidence']}")
-
-    if not ref_tokens:
-        return detail, note
+    # Always preserve the five-slot decomposition shape for downstream parsers.
+    normalized = {
+        "field": refs.get("field") or "-",
+        "action": refs.get("action") or "-",
+        "assert": refs.get("assertion") or "-",
+        "error": refs.get("error") or "-",
+        "evidence": refs.get("evidence") or "-",
+    }
+    ref_tokens = [
+        f"field:{normalized['field']}",
+        f"action:{normalized['action']}",
+        f"assert:{normalized['assert']}",
+        f"error:{normalized['error']}",
+        f"evidence:{normalized['evidence']}",
+    ]
 
     enriched_detail = detail
     if not enriched_detail:
-        enriched_detail = " / ".join(ref_tokens[:2])
-    elif "field:" not in enriched_detail and refs.get("field"):
-        enriched_detail = f"{enriched_detail} | field:{refs['field']}"
+        enriched_detail = f"field:{normalized['field']} / action:{normalized['action']}"
+    elif "field:" not in enriched_detail:
+        enriched_detail = f"{enriched_detail} | field:{normalized['field']}"
 
     links = "decompRefs=" + " ; ".join(ref_tokens)
     enriched_note = f"{note} | {links}" if note else links
