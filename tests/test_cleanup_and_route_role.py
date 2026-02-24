@@ -110,8 +110,12 @@ class CleanupAndRouteRoleTests(unittest.TestCase):
 
     def test_route_role_mapping_covers_common_gaps(self):
         self.assertEqual(_classify_role("/admin/users", "User role management"), "DASHBOARD")
+        self.assertEqual(_classify_role("/console/audit-log", "Operator audit"), "DASHBOARD")
+        self.assertEqual(_classify_role("/workspace/settings/staff", "Backoffice staff settings"), "DASHBOARD")
         self.assertEqual(_classify_role("/account/profile", "My account"), "CHECKOUT")
+        self.assertEqual(_classify_role("/billing/subscription", "Subscription invoice"), "CHECKOUT")
         self.assertEqual(_classify_role("/signup", "Create account"), "LOGIN")
+        self.assertEqual(_classify_role("/auth/otp", "Verify OTP"), "LOGIN")
 
 
 if __name__ == "__main__":

@@ -164,11 +164,18 @@ def _priority_tier(score: int) -> str:
 
 def _classify_role(path: str, title: str) -> str:
     s = f"{path} {title}".lower()
-    if any(k in s for k in ["login", "signin", "sign-in", "auth", "로그인", "회원가입", "가입", "register", "signup", "sign-up"]):
+    login_markers = ["login", "signin", "sign-in", "auth", "로그인", "회원가입", "가입", "register", "signup", "sign-up", "otp", "verify", "비밀번호", "reset-password"]
+    dashboard_markers = [
+        "admin", "dashboard", "cms", "manage", "manager", "permission", "role", "acl", "rbac", "audit", "console", "backoffice", "staff", "operator", "workspace/settings",
+        "관리", "권한", "운영", "관리자", "감사로그",
+    ]
+    checkout_markers = ["checkout", "cart", "order", "orders", "mypage", "profile", "account", "billing", "invoice", "subscription", "wallet", "결제", "주문", "장바구니", "프로필", "계정", "구독"]
+
+    if any(k in s for k in login_markers):
         return "LOGIN"
-    if any(k in s for k in ["admin", "dashboard", "cms", "manage", "manager", "permission", "role", "관리", "권한"]):
+    if any(k in s for k in dashboard_markers):
         return "DASHBOARD"
-    if any(k in s for k in ["checkout", "cart", "order", "orders", "mypage", "profile", "account", "결제", "주문", "장바구니", "프로필", "계정"]):
+    if any(k in s for k in checkout_markers):
         return "CHECKOUT"
     return "LANDING"
 

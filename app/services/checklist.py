@@ -11,11 +11,21 @@ EXPANSION_KEYS = {"field", "action", "assertion"}
 
 def _infer_actor(module: str, category: str, action: str, expected: str, scenario: str) -> str:
     text = " ".join([module, category, action, expected, scenario]).lower()
-    admin_markers = ["/admin", "admin", "cms", "dashboard", "manage", "관리", "권한", "발행", "승격", "감사로그"]
-    user_markers = ["mypage", "profile", "account", "cart", "checkout", "order", "user", "사용자", "회원"]
-    if any(k in text for k in admin_markers):
+    admin_markers = [
+        "/admin", "admin", "cms", "dashboard", "manage", "manager", "console", "backoffice", "acl", "rbac", "audit", "operator",
+        "관리", "관리자", "권한", "발행", "승격", "감사로그",
+    ]
+    user_markers = ["mypage", "profile", "account", "cart", "checkout", "order", "billing", "subscription", "wallet", "사용자", "회원", "내 정보"]
+    auth_markers = ["login", "signin", "sign-in", "register", "signup", "로그인", "회원가입", "인증", "otp", "비밀번호"]
+
+    admin_hits = sum(1 for k in admin_markers if k in text)
+    user_hits = sum(1 for k in user_markers if k in text)
+
+    if any(k in text for k in auth_markers):
+        return "USER"
+    if admin_hits >= 1 and admin_hits >= user_hits:
         return "ADMIN"
-    if any(k in text for k in user_markers):
+    if user_hits >= 1:
         return "USER"
     return "USER"
 

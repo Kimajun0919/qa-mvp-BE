@@ -273,7 +273,19 @@ def _infer_actor_from_row(row: Dict[str, Any]) -> str:
             str(row.get("expected") or ""),
         ]
     ).lower()
-    if any(k in text for k in ["/admin", "admin", "cms", "dashboard", "manage", "관리", "권한", "발행", "승격", "감사로그"]):
+    admin_markers = [
+        "/admin", "admin", "cms", "dashboard", "manage", "manager", "console", "backoffice", "acl", "rbac", "audit", "operator",
+        "관리", "관리자", "권한", "발행", "승격", "감사로그",
+    ]
+    user_markers = ["mypage", "profile", "account", "cart", "checkout", "order", "billing", "subscription", "wallet", "사용자", "회원", "내 정보"]
+    auth_markers = ["login", "signin", "sign-in", "register", "signup", "로그인", "회원가입", "인증", "otp", "비밀번호"]
+
+    admin_hits = sum(1 for k in admin_markers if k in text)
+    user_hits = sum(1 for k in user_markers if k in text)
+
+    if any(k in text for k in auth_markers):
+        return "USER"
+    if admin_hits >= 1 and admin_hits >= user_hits:
         return "ADMIN"
     return "USER"
 
@@ -443,15 +455,27 @@ async def _run_one(page: Any, url: str, scenario: str, category: str = "", actor
             meta["action"] = "click-primary"
             actor_norm = (actor or "USER").upper()
             actor_selectors = [
-                "button", "a[href]", "[role='button']",
+                "button:not([disabled])", "a[href]", "[role='button']:not([aria-disabled='true'])",
             ]
             if actor_norm == "ADMIN":
                 actor_selectors = [
-                    "button:has-text('저장')", "button:has-text('발행')", "button:has-text('승인')",
-                    "button:has-text('Save')", "button:has-text('Publish')", "button:has-text('Approve')",
-                    "button", "a[href]", "[role='button']",
+                    "button:has-text('저장')", "button:has-text('발행')", "button:has-text('승인')", "button:has-text('권한')", "button:has-text('관리')",
+                    "button:has-text('Save')", "button:has-text('Publish')", "button:has-text('Approve')", "button:has-text('Permission')", "button:has-text('Manage')",
+                    "button:not([disabled])", "a[href]", "[role='button']:not([aria-disabled='true'])",
                 ]
             meta["actorRoute"] = actor_norm
+
+            before_state = await page.evaluate(
+                """
+                () => ({
+                  dialogs: document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open], .modal.show, .popup.open').length,
+                  expanded: document.querySelectorAll('[aria-expanded="true"]').length,
+                  selected: document.querySelectorAll('[aria-selected="true"], .active, .is-active, .selected, [data-state="open"]').length,
+                  alerts: document.querySelectorAll('[role="alert"], .toast, .snackbar, .notification').length,
+                })
+                """
+            )
+
             clicked = False
             for sel in actor_selectors:
                 try:
@@ -468,10 +492,28 @@ async def _run_one(page: Any, url: str, scenario: str, category: str = "", actor
                 return "FAIL", "클릭 가능한 주요 요소 미발견", meta, elems
             if after != current:
                 return "PASS", "", meta, elems
-            # same page acceptable only with explicit state signal
-            html_after = (await page.content())[:30000].lower()
-            if any(k in html_after for k in ["active", "selected", "open", "expanded", "완료", "성공", "적용"]):
+
+            after_state = await page.evaluate(
+                """
+                () => ({
+                  dialogs: document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open], .modal.show, .popup.open').length,
+                  expanded: document.querySelectorAll('[aria-expanded="true"]').length,
+                  selected: document.querySelectorAll('[aria-selected="true"], .active, .is-active, .selected, [data-state="open"]').length,
+                  alerts: document.querySelectorAll('[role="alert"], .toast, .snackbar, .notification').length,
+                })
+                """
+            )
+            meta.update({"stateBefore": before_state, "stateAfter": after_state})
+            if before_state != after_state:
                 return "PASS", "", meta, elems
+
+            html_after = (await page.content())[:30000].lower()
+            if any(k in html_after for k in ["active", "selected", "open", "expanded", "완료", "성공", "적용", "저장됨", "updated"]):
+                return "PASS", "", meta, elems
+
+            rich_surface = int(elems.get("buttons", 0)) + int(elems.get("links", 0)) + int(elems.get("forms", 0)) >= 8
+            if rich_surface:
+                return "PASS_WITH_WARNINGS", "복합 페이지로 상태 신호가 미약하여 경고 통과", meta, elems
             return "FAIL", "클릭 후 상태/이동 변화 미확인", meta, elems
 
         if kind == "RESPONSIVE":

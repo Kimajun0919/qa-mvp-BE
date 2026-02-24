@@ -46,6 +46,24 @@ class InteractionLinkingTests(unittest.TestCase):
         }
         self.assertEqual(_normalize_actor(row), "ADMIN")
 
+    def test_actor_normalization_prefers_user_for_auth_flows(self):
+        row = {
+            "module": "/auth/otp",
+            "구분": "기능",
+            "action": "로그인 후 OTP 인증 완료",
+            "expected": "마이페이지로 이동",
+        }
+        self.assertEqual(_normalize_actor(row), "USER")
+
+    def test_actor_normalization_covers_console_admin_routes(self):
+        row = {
+            "module": "/console/audit-log",
+            "구분": "운영",
+            "action": "운영자 감사로그 필터 적용",
+            "expected": "필터 조건에 맞게 목록 갱신",
+        }
+        self.assertEqual(_normalize_actor(row), "ADMIN")
+
     def test_normalize_row_infers_actor_and_handoff_key_for_linking(self):
         row = _normalize_row(
             {
