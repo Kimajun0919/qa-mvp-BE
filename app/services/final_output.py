@@ -63,6 +63,9 @@ def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
     assertion_ref = ""
     error_ref = ""
     evidence_ref = ""
+    actor_ref = str(item.get("Actor") or item.get("actor") or item.get("역할") or "").strip()
+    handoff_ref = str(item.get("HandoffKey") or item.get("handoffKey") or item.get("연계키") or "").strip()
+    chain_ref = str(item.get("ChainStatus") or item.get("chainStatus") or item.get("체인상태") or "").strip()
 
     for r in rows:
         if not isinstance(r, dict):
@@ -72,6 +75,13 @@ def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
         action = str(r.get("action") or "").strip()
         assertion = r.get("assertion") if isinstance(r.get("assertion"), dict) else {}
         evidence = r.get("evidence") if isinstance(r.get("evidence"), dict) else {}
+
+        if not actor_ref:
+            actor_ref = str(r.get("Actor") or r.get("actor") or "").strip()
+        if not handoff_ref:
+            handoff_ref = str(r.get("HandoffKey") or r.get("handoffKey") or "").strip()
+        if not chain_ref:
+            chain_ref = str(r.get("ChainStatus") or r.get("chainStatus") or "").strip()
 
         if (not field_ref) and field:
             field_ref = field
@@ -123,7 +133,26 @@ def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
         if exp or obs:
             assertion_ref = f"exp={exp or '-'}|obs={obs or '-'}"
     if not error_ref:
-        error_ref = str(item.get("실패코드") or (fd.get("assertion") or {}).get("failureCode") or "").strip()
+        error_ref = str(item.get("실패코드") or item.get("failureCode") or item.get("error") or (fd.get("assertion") or {}).get("failureCode") or "").strip()
+    if not evidence_ref:
+        em = item.get("증거메타") if isinstance(item.get("증거메타"), dict) else {}
+        shot = str(em.get("screenshotPath") or item.get("증거") or "").strip()
+        url = str(em.get("observedUrl") or "").strip()
+        status = str(em.get("httpStatus") or "").strip()
+        kind = str(em.get("scenarioKind") or "").strip()
+        ts = str(em.get("timestamp") or "").strip()
+        bits = []
+        if status:
+            bits.append(f"http={status}")
+        if url:
+            bits.append(f"url={url}")
+        if kind:
+            bits.append(f"kind={kind}")
+        if ts:
+            bits.append(f"ts={ts}")
+        if shot:
+            bits.append(f"shot={shot}")
+        evidence_ref = "|".join(bits)
     if not evidence_ref:
         e = fd.get("evidence") if isinstance(fd.get("evidence"), dict) else {}
         shot = str(e.get("screenshotPath") or "").strip()
@@ -150,6 +179,9 @@ def _row_decomposition_refs(item: Dict[str, Any]) -> Dict[str, str]:
         "assertion": assertion_ref,
         "error": error_ref,
         "evidence": evidence_ref,
+        "actor": actor_ref,
+        "handoff": handoff_ref,
+        "chain": chain_ref,
     }
 
 
@@ -162,6 +194,9 @@ def _with_decomposition_density(item: Dict[str, Any], detail: str, note: str) ->
         "assert": refs.get("assertion") or "-",
         "error": refs.get("error") or "-",
         "evidence": refs.get("evidence") or "-",
+        "actor": refs.get("actor") or "-",
+        "handoff": refs.get("handoff") or "-",
+        "chain": refs.get("chain") or "-",
     }
     ref_tokens = [
         f"field:{normalized['field']}",
@@ -169,6 +204,9 @@ def _with_decomposition_density(item: Dict[str, Any], detail: str, note: str) ->
         f"assert:{normalized['assert']}",
         f"error:{normalized['error']}",
         f"evidence:{normalized['evidence']}",
+        f"actor:{normalized['actor']}",
+        f"handoff:{normalized['handoff']}",
+        f"chain:{normalized['chain']}",
     ]
 
     enriched_detail = detail
@@ -186,7 +224,7 @@ def _to_detail_rows(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     today = datetime.now().strftime("%y.%m.%d")
     out: List[Dict[str, Any]] = []
     for i, it in enumerate(items, start=1):
-        raw_status = str(it.get("진행사항") or it.get("실행결과") or it.get("status") or "")
+        raw_status = str(it.get("진행사항") or it.get("ChainStatus") or it.get("실행결과") or it.get("status") or "")
         status = _norm_status(raw_status)
         detail = str(it.get("상세") or it.get("detail") or it.get("테스트시나리오") or "")
         note = str(it.get("비고") or it.get("note") or "")

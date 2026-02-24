@@ -41,10 +41,37 @@ class DensityAndFinalizeTests(unittest.TestCase):
         ]
         rows = _to_detail_rows(items)
         note = rows[0].get("비고") or ""
-        for token in ["field:", "action:", "assert:", "error:", "evidence:"]:
+        for token in ["field:", "action:", "assert:", "error:", "evidence:", "actor:", "handoff:", "chain:"]:
             self.assertIn(token, note)
         self.assertIn("kind=VALIDATION", note)
         self.assertIn("ts=1700000000", note)
+
+    def test_finalize_maps_actor_chain_and_top_level_error_evidence(self):
+        items = [
+            {
+                "테스트시나리오": "권한 연계",
+                "ChainStatus": "FAIL",
+                "Actor": "ADMIN",
+                "HandoffKey": "auth-flow-1",
+                "실패코드": "HTTP_ERROR",
+                "증거": "out/evidence.png",
+                "증거메타": {
+                    "httpStatus": 500,
+                    "observedUrl": "https://example.com/admin",
+                    "scenarioKind": "AUTH",
+                    "timestamp": 1700001234,
+                },
+            }
+        ]
+        rows = _to_detail_rows(items)
+        row = rows[0]
+        self.assertEqual(row.get("진행사항"), "수정 필요")
+        note = row.get("비고") or ""
+        self.assertIn("error:HTTP_ERROR", note)
+        self.assertIn("http=500", note)
+        self.assertIn("actor:ADMIN", note)
+        self.assertIn("handoff:auth-flow-1", note)
+        self.assertIn("chain:FAIL", note)
 
     def test_board_domain_density_has_board_core_rows(self):
         out = asyncio.run(
