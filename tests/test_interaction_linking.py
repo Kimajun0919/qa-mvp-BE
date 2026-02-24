@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from app.services.checklist import generate_checklist
+from app.services.checklist import _normalize_row, generate_checklist
 from app.services.execute_checklist import _aggregate_chain_status, _normalize_actor
 
 
@@ -29,6 +29,28 @@ class InteractionLinkingTests(unittest.TestCase):
         self.assertEqual(_normalize_actor({}), "USER")
         self.assertEqual(_normalize_actor({"Actor": "admin"}), "ADMIN")
         self.assertEqual(_normalize_actor({"Actor": "unknown"}), "USER")
+
+    def test_actor_normalization_infers_admin_from_route_role_context(self):
+        row = {
+            "module": "/admin/users",
+            "구분": "권한",
+            "action": "권한 없는 계정으로 권한승격 시도",
+            "expected": "정책에 따라 차단",
+        }
+        self.assertEqual(_normalize_actor(row), "ADMIN")
+
+    def test_normalize_row_infers_actor_and_handoff_key_for_linking(self):
+        row = _normalize_row(
+            {
+                "화면": "/admin/roles",
+                "구분": "회귀",
+                "action": "관리자 변경 후 사용자 화면 반영 상태 확인",
+                "expected": "권한 변경 사항 반영",
+            },
+            default_screen="/admin/roles",
+        )
+        self.assertEqual(row.get("Actor"), "ADMIN")
+        self.assertEqual(row.get("HandoffKey"), "USER_ROLE_SYNC")
 
     def test_chain_status_aggregation(self):
         self.assertEqual(_aggregate_chain_status(["PASS", "PASS"]), "PASS")

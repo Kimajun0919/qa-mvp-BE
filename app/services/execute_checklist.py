@@ -264,9 +264,25 @@ async def _collect_elements(page: Any) -> Dict[str, int]:
         return {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
 
 
+def _infer_actor_from_row(row: Dict[str, Any]) -> str:
+    text = " ".join(
+        [
+            str(row.get("module") or row.get("화면") or ""),
+            str(row.get("구분") or ""),
+            str(row.get("action") or row.get("테스트시나리오") or ""),
+            str(row.get("expected") or ""),
+        ]
+    ).lower()
+    if any(k in text for k in ["/admin", "admin", "cms", "dashboard", "manage", "관리", "권한", "발행", "승격", "감사로그"]):
+        return "ADMIN"
+    return "USER"
+
+
 def _normalize_actor(row: Dict[str, Any]) -> str:
-    actor = str(row.get("Actor") or row.get("actor") or row.get("역할") or "USER").strip().upper()
-    return actor if actor in {"USER", "ADMIN"} else "USER"
+    actor = str(row.get("Actor") or row.get("actor") or row.get("역할") or "").strip().upper()
+    if actor in {"USER", "ADMIN"}:
+        return actor
+    return _infer_actor_from_row(row)
 
 
 def _handoff_key(row: Dict[str, Any]) -> str:

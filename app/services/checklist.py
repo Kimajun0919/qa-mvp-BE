@@ -9,6 +9,35 @@ COLUMNS = BASE_COLUMNS + GRANULAR_COLUMNS
 EXPANSION_KEYS = {"field", "action", "assertion"}
 
 
+def _infer_actor(module: str, category: str, action: str, expected: str, scenario: str) -> str:
+    text = " ".join([module, category, action, expected, scenario]).lower()
+    admin_markers = ["/admin", "admin", "cms", "dashboard", "manage", "관리", "권한", "발행", "승격", "감사로그"]
+    user_markers = ["mypage", "profile", "account", "cart", "checkout", "order", "user", "사용자", "회원"]
+    if any(k in text for k in admin_markers):
+        return "ADMIN"
+    if any(k in text for k in user_markers):
+        return "USER"
+    return "USER"
+
+
+def _infer_handoff_key(module: str, element: str, action: str, expected: str, scenario: str) -> str:
+    text = " ".join([module, element, action, expected, scenario]).lower()
+    if any(k in text for k in ["role", "permission", "권한", "승격", "사용자"]):
+        entity = "USER_ROLE"
+    elif any(k in text for k in ["product", "item", "catalog", "상품"]):
+        entity = "PRODUCT"
+    elif any(k in text for k in ["banner", "hero", "popup", "배너"]):
+        entity = "BANNER"
+    elif any(k in text for k in ["post", "article", "content", "notice", "게시", "콘텐츠"]):
+        entity = "CONTENT"
+    else:
+        entity = "GENERIC"
+
+    if any(k in text for k in ["반영", "연계", "handoff", "sync", "변경 후", "영향"]):
+        return f"{entity}_SYNC"
+    return ""
+
+
 def _normalize_row(row: Dict[str, Any], *, default_screen: str = "") -> Dict[str, str]:
     module = str(
         row.get("module")
@@ -37,10 +66,12 @@ def _normalize_row(row: Dict[str, Any], *, default_screen: str = "") -> Dict[str
     if expected and expected not in scenario:
         scenario = f"{scenario} - {expected}" if scenario else expected
 
-    actor = str(row.get("Actor") or row.get("actor") or row.get("역할") or "USER").strip().upper()
+    actor = str(row.get("Actor") or row.get("actor") or row.get("역할") or "").strip().upper()
     if actor not in {"USER", "ADMIN"}:
-        actor = "USER"
+        actor = _infer_actor(module, category, action, expected, scenario)
     handoff_key = str(row.get("HandoffKey") or row.get("handoffKey") or row.get("연계키") or "").strip()
+    if not handoff_key:
+        handoff_key = _infer_handoff_key(module, element, action, expected, scenario)
     chain_status = str(row.get("ChainStatus") or row.get("chainStatus") or row.get("체인상태") or "").strip()
 
     return {
