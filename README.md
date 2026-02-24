@@ -17,6 +17,20 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 - `/api/checklist/execute`
 - `/api/flow/transition-check`
 - `/api/report/finalize`
+- `/api/sheets/pull` (Phase-1 read-only prototype)
+
+## Google Sheets Phase-1 (pull-only)
+Environment variables:
+- `QA_SHEETS_SPREADSHEET_ID` (required)
+- `QA_SHEETS_AUTH_MODE` (`service_account` or `oauth`)
+- `QA_SHEETS_SERVICE_ACCOUNT_JSON` (required for `service_account`, file path)
+- `QA_SHEETS_OAUTH_ACCESS_TOKEN` (required for `oauth`, placeholder mode)
+
+Notes:
+- Endpoint only reads from `checklist`, `execution`, `fix_sheet`
+- Validation errors are returned in response and logged
+- Audit log is written to `out/google_sheets_audit.jsonl`
+- Writes are intentionally disabled in Phase-1
 
 See `docs/API_SPEC.md`.
 

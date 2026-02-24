@@ -69,6 +69,47 @@ OAuth redirect callback(code/state) 처리 후 auth profile 저장.
 
 ---
 
+## Google Sheets Integration (Phase-1 Pull-only)
+
+### POST `/api/sheets/pull`
+Google Sheets에서 `checklist`, `execution`, `fix_sheet` 탭을 읽고 스키마 검증.
+
+Request body:
+```json
+{
+  "sheets": ["checklist", "execution", "fix_sheet"],
+  "strict": false
+}
+```
+
+Options
+- `sheets`: 부분 조회할 탭 목록(optional, 기본 3개 전체)
+- `strict`: `true`면 검증 에러가 하나라도 있으면 `422` 반환
+
+Response fields
+- `ok`: boolean
+- `mode`: `pull-only`
+- `spreadsheetId`: string
+- `authMode`: `service_account|oauth`
+- `data.<sheet>.rows`: 검증 통과 rows
+- `data.<sheet>.rawRowCount|validRowCount|errorCount`: 카운트
+- `errors`: row-level validation error 목록
+- `summary`: 전체 집계
+
+### GET `/api/sheets/pull`
+기본 3개 탭 pull + validate (body 없이 실행).
+
+Environment variables
+- `QA_SHEETS_SPREADSHEET_ID` (required)
+- `QA_SHEETS_AUTH_MODE` (`service_account|oauth`)
+- `QA_SHEETS_SERVICE_ACCOUNT_JSON` (service_account 필수, 파일 경로)
+- `QA_SHEETS_OAUTH_ACCESS_TOKEN` (oauth 필수, placeholder)
+
+Audit log
+- `out/google_sheets_audit.jsonl` 에 pull 성공/실패 이벤트 기록
+
+---
+
 ## 1) Analyze
 
 ### POST `/api/analyze`

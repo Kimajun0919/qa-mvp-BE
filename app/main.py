@@ -29,6 +29,7 @@ from app.services.structure_map import build_structure_map
 from app.services.state_transition import run_transition_check
 from app.services.qa_templates import build_template_steps, list_templates
 from app.services.user_signup import attempt_user_signup
+from app.services.google_sheets import audit_log, pull_and_validate
 
 APP_NAME = "qa-mvp-fastapi"
 NODE_API_BASE = os.getenv("QA_NODE_API_BASE", "http://127.0.0.1:4173").rstrip("/")
@@ -225,6 +226,32 @@ async def health() -> Dict[str, Any]:
         "upstreamOk": upstream_ok,
         "upstreamDetail": upstream_detail,
     }
+
+
+@app.post("/api/sheets/pull")
+async def sheets_pull(req: Request) -> Dict[str, Any]:
+    payload = await _json_payload(req)
+    sheets = payload.get("sheets") if isinstance(payload.get("sheets"), list) else None
+    strict = bool(payload.get("strict", False))
+    try:
+        out = pull_and_validate(sheets=sheets)
+    except Exception as e:
+        audit_log("google_sheets_pull_failed", {"error": str(e)})
+        raise HTTPException(status_code=400, detail={"ok": False, "error": str(e)}) from e
+
+    if strict and int(out.get("summary", {}).get("totalErrors", 0)) > 0:
+        audit_log("google_sheets_pull_strict_reject", {"summary": out.get("summary")})
+        raise HTTPException(status_code=422, detail=out)
+    return out
+
+
+@app.get("/api/sheets/pull")
+async def sheets_pull_get() -> Dict[str, Any]:
+    try:
+        return pull_and_validate()
+    except Exception as e:
+        audit_log("google_sheets_pull_failed", {"error": str(e)})
+        raise HTTPException(status_code=400, detail={"ok": False, "error": str(e)}) from e
 
 
 @app.post("/api/llm/oauth/start")
