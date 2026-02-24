@@ -100,3 +100,27 @@ def get_bundle(analysis_id: str) -> Optional[Dict[str, Any]]:
         "flows": json.loads(row["flows_json"] or "[]"),
         "createdAt": row["created_at"],
     }
+
+
+def delete_bundle(analysis_id: str) -> bool:
+    with _lock:
+        conn = _conn()
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS analysis_bundle (
+                  analysis_id TEXT PRIMARY KEY,
+                  base_url TEXT NOT NULL,
+                  pages_json TEXT NOT NULL,
+                  elements_json TEXT NOT NULL,
+                  candidates_json TEXT NOT NULL,
+                  flows_json TEXT,
+                  created_at INTEGER NOT NULL
+                )
+                """
+            )
+            cur = conn.execute("DELETE FROM analysis_bundle WHERE analysis_id=?", (analysis_id,))
+            conn.commit()
+            return (cur.rowcount or 0) > 0
+        finally:
+            conn.close()

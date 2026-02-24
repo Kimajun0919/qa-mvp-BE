@@ -24,7 +24,7 @@ from app.services.flows import finalize_flows, run_flows
 from app.services.page_audit import auto_checklist_from_sitemap
 from app.services.final_output import write_final_testsheet
 from app.services.execute_checklist import execute_checklist_rows
-from app.services.storage import get_bundle, migrate, save_analysis, save_flows
+from app.services.storage import delete_bundle, get_bundle, migrate, save_analysis, save_flows
 from app.services.structure_map import build_structure_map
 from app.services.state_transition import run_transition_check
 from app.services.qa_templates import build_template_steps, list_templates
@@ -408,6 +408,13 @@ async def analysis_get(analysis_id: str) -> Dict[str, Any]:
     return await proxy_get(f"/api/analysis/{analysis_id}")
 
 
+@app.delete("/api/analysis/{analysis_id}")
+async def analysis_delete(analysis_id: str) -> Dict[str, Any]:
+    native_analysis_store.pop(analysis_id, None)
+    deleted = delete_bundle(analysis_id)
+    return {"ok": True, "analysisId": analysis_id, "deleted": bool(deleted)}
+
+
 @app.post("/api/flow-map")
 async def flow_map(req: Request) -> Dict[str, Any]:
     payload = await _json_payload(req)
@@ -702,6 +709,12 @@ async def checklist_execute_status(job_id: str) -> Dict[str, Any]:
     if not job:
         raise HTTPException(status_code=404, detail={"ok": False, "error": "job not found"})
     return job
+
+
+@app.delete("/api/checklist/execute/status/{job_id}")
+async def checklist_execute_status_delete(job_id: str) -> Dict[str, Any]:
+    existed = execute_jobs.pop(job_id, None) is not None
+    return {"ok": True, "jobId": job_id, "deleted": existed}
 
 
 @app.get("/api/qa/templates")

@@ -164,11 +164,11 @@ def _priority_tier(score: int) -> str:
 
 def _classify_role(path: str, title: str) -> str:
     s = f"{path} {title}".lower()
-    if any(k in s for k in ["login", "signin", "로그인"]):
+    if any(k in s for k in ["login", "signin", "sign-in", "auth", "로그인", "회원가입", "가입", "register", "signup", "sign-up"]):
         return "LOGIN"
-    if any(k in s for k in ["admin", "dashboard", "관리"]):
+    if any(k in s for k in ["admin", "dashboard", "cms", "manage", "manager", "permission", "role", "관리", "권한"]):
         return "DASHBOARD"
-    if any(k in s for k in ["checkout", "cart", "결제", "주문"]):
+    if any(k in s for k in ["checkout", "cart", "order", "orders", "mypage", "profile", "account", "결제", "주문", "장바구니", "프로필", "계정"]):
         return "CHECKOUT"
     return "LANDING"
 
