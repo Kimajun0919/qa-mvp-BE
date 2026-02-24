@@ -304,6 +304,78 @@ def _aggregate_chain_status(statuses: List[str]) -> str:
     return "PASS"
 
 
+def build_execution_graph(rows: List[Dict[str, Any]] | None = None, chain_statuses: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    rows = rows or []
+    supplied_chain_statuses = chain_statuses or {}
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+    chain_meta: Dict[str, Any] = {}
+
+    ordered_chain_nodes: Dict[str, List[str]] = {}
+    chain_row_statuses: Dict[str, List[str]] = {}
+
+    for idx, row in enumerate(rows, start=1):
+        handoff_key = str(row.get("HandoffKey") or row.get("handoffKey") or row.get("연계키") or "").strip()
+        actor = str(row.get("Actor") or row.get("actor") or row.get("역할") or "USER").upper() or "USER"
+        status = str(row.get("ChainStatus") or row.get("실행결과") or row.get("확인") or "").upper()
+        observed_url = str((row.get("증거메타") or {}).get("observedUrl") or (row.get("실행메타") or {}).get("urlAfter") or _pick_url(str(row.get("module") or row.get("화면") or "")) or "")
+        module = str(row.get("module") or row.get("화면") or "")
+        action = str(row.get("action") or row.get("테스트시나리오") or "")
+
+        node_id = str(row.get("graphNodeId") or f"r{idx}")
+        nodes.append(
+            {
+                "id": node_id,
+                "type": "executionRow",
+                "label": action or f"row-{idx}",
+                "rowNo": idx,
+                "actor": actor,
+                "status": status,
+                "handoffKey": handoff_key,
+                "module": module,
+                "url": observed_url,
+            }
+        )
+
+        if handoff_key:
+            ordered_chain_nodes.setdefault(handoff_key, []).append(node_id)
+            chain_row_statuses.setdefault(handoff_key, []).append(status)
+
+    for key, node_ids in ordered_chain_nodes.items():
+        statuses = chain_row_statuses.get(key, [])
+        chain_status = str(supplied_chain_statuses.get(key) or _aggregate_chain_status(statuses) or "")
+        chain_meta[key] = {
+            "status": chain_status,
+            "nodeIds": node_ids,
+            "rowCount": len(node_ids),
+        }
+
+        for i in range(len(node_ids) - 1):
+            src = node_ids[i]
+            dst = node_ids[i + 1]
+            edges.append(
+                {
+                    "id": f"e:{key}:{i+1}",
+                    "source": src,
+                    "target": dst,
+                    "type": "handoff",
+                    "handoffKey": key,
+                    "status": chain_status,
+                }
+            )
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "chainMeta": chain_meta,
+        "meta": {
+            "nodeCount": len(nodes),
+            "edgeCount": len(edges),
+            "chainCount": len(chain_meta),
+        },
+    }
+
+
 async def _run_one(page: Any, url: str, scenario: str, category: str = "", actor: str = "USER") -> Tuple[str, str, Dict[str, Any], Dict[str, int]]:
     meta: Dict[str, Any] = {"scenarioKind": _scenario_kind(scenario, category), "action": ""}
     elems: Dict[str, int] = {"buttons": 0, "links": 0, "inputs": 0, "selects": 0, "textareas": 0, "editors": 0, "forms": 0}
@@ -857,6 +929,9 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
     except Exception:
         atomic_path = Path("")
 
+    chain_status_map = {k: _aggregate_chain_status(v) for k, v in chain_histories.items()}
+    graph_payload = build_execution_graph(executed, chain_status_map)
+
     return {
         "ok": True,
         "rows": executed,
@@ -866,7 +941,9 @@ async def execute_checklist_rows(rows: List[Dict[str, Any]], max_rows: int = 20,
         "loginUsed": login_used,
         "failureCodeHints": failure_code_hints,
         "retryStats": retry_stats,
-        "chainStatuses": {k: _aggregate_chain_status(v) for k, v in chain_histories.items()},
+        "chainStatuses": chain_status_map,
+        "graph": graph_payload,  # backward-compatible short alias
+        "executionGraph": graph_payload,
         "decompositionRows": atomic_rows,
         "decompositionRowsPath": str(atomic_path).replace("\\", "/") if str(atomic_path) else "",
     }

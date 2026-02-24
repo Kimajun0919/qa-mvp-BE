@@ -2,10 +2,17 @@ import asyncio
 import unittest
 
 from app.services.checklist import _normalize_row, generate_checklist
-from app.services.execute_checklist import _aggregate_chain_status, _normalize_actor
+from fastapi.testclient import TestClient
+
+from app.main import app
+from app.services.execute_checklist import _aggregate_chain_status, _normalize_actor, build_execution_graph
 
 
 class InteractionLinkingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(app)
+
     def test_checklist_rows_include_linking_fields_backward_compatible(self):
         out = asyncio.run(
             generate_checklist(
@@ -56,6 +63,37 @@ class InteractionLinkingTests(unittest.TestCase):
         self.assertEqual(_aggregate_chain_status(["PASS", "PASS"]), "PASS")
         self.assertEqual(_aggregate_chain_status(["PASS", "BLOCKED"]), "BLOCKED")
         self.assertEqual(_aggregate_chain_status(["PASS", "FAIL"]), "FAIL")
+
+    def test_build_execution_graph_shape_from_rows(self):
+        rows = [
+            {"Actor": "USER", "HandoffKey": "AUTH_FLOW", "ChainStatus": "PASS", "action": "로그인", "module": "https://example.com/login"},
+            {"Actor": "ADMIN", "HandoffKey": "AUTH_FLOW", "ChainStatus": "FAIL", "action": "승인", "module": "https://example.com/admin"},
+            {"Actor": "USER", "action": "마이페이지", "module": "https://example.com/mypage", "실행결과": "PASS"},
+        ]
+        graph = build_execution_graph(rows, {"AUTH_FLOW": "FAIL"})
+        self.assertIn("nodes", graph)
+        self.assertIn("edges", graph)
+        self.assertIn("chainMeta", graph)
+        self.assertEqual(len(graph.get("nodes") or []), 3)
+        self.assertEqual(len(graph.get("edges") or []), 1)
+        self.assertEqual((graph.get("chainMeta") or {}).get("AUTH_FLOW", {}).get("status"), "FAIL")
+
+    def test_execute_graph_endpoint_backward_compatible_aliases(self):
+        payload = {
+            "rows": [
+                {"Actor": "USER", "HandoffKey": "K1", "ChainStatus": "PASS", "action": "A", "module": "https://example.com/a"},
+                {"Actor": "ADMIN", "HandoffKey": "K1", "ChainStatus": "PASS", "action": "B", "module": "https://example.com/b"},
+            ],
+            "chainStatuses": {"K1": "PASS"},
+        }
+        res = self.client.post("/api/checklist/execute/graph", json=payload)
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertTrue(body.get("ok"))
+        self.assertIn("graph", body)
+        self.assertIn("executionGraph", body)
+        self.assertEqual(body.get("graph"), body.get("executionGraph"))
+        self.assertEqual((body.get("graph") or {}).get("meta", {}).get("edgeCount"), 1)
 
 
 if __name__ == "__main__":

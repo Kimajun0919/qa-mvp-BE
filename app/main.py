@@ -23,7 +23,7 @@ from app.services.flow_map import build_flow_map
 from app.services.flows import finalize_flows, run_flows
 from app.services.page_audit import auto_checklist_from_sitemap
 from app.services.final_output import write_final_testsheet
-from app.services.execute_checklist import execute_checklist_rows
+from app.services.execute_checklist import build_execution_graph, execute_checklist_rows
 from app.services.storage import delete_bundle, get_bundle, migrate, save_analysis, save_flows
 from app.services.structure_map import build_structure_map
 from app.services.state_transition import run_transition_check
@@ -564,6 +564,7 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if not result.get("ok"):
         return {"ok": False, "error": result.get("error")}
     final_sheet = write_final_testsheet(cfg["run_id"], cfg["project_name"], result.get("rows") or [])
+    graph_payload = result.get("executionGraph") or result.get("graph") or build_execution_graph(result.get("rows") or [], result.get("chainStatuses") or {})
     return {
         "ok": True,
         "summary": result.get("summary"),
@@ -572,6 +573,8 @@ async def _execute_and_finalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "failureCodeHints": result.get("failureCodeHints") or {},
         "retryStats": result.get("retryStats") or {},
         "chainStatuses": result.get("chainStatuses") or {},
+        "graph": graph_payload,
+        "executionGraph": graph_payload,
         "loginUsed": result.get("loginUsed", False),
         "rows": result.get("rows"),
         "decompositionRows": result.get("decompositionRows") or [],
@@ -681,6 +684,7 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
             final_sheet = write_final_testsheet(cfg["run_id"], cfg["project_name"], merged_rows)
             merged_retry_stats["totalRows"] = len(merged_rows)
             merged_retry_stats["retryRate"] = round(int(merged_retry_stats.get("eligibleRows", 0)) / max(1, len(merged_rows)), 3)
+            graph_payload = build_execution_graph(merged_rows, merged_chain_statuses)
             execute_jobs[job_id] = {
                 **execute_jobs[job_id],
                 "ok": True,
@@ -691,6 +695,8 @@ async def checklist_execute_async(req: Request) -> Dict[str, Any]:
                 "failureCodeHints": merged_hints,
                 "retryStats": merged_retry_stats,
                 "chainStatuses": merged_chain_statuses,
+                "graph": graph_payload,
+                "executionGraph": graph_payload,
                 "rows": merged_rows,
                 "decompositionRows": merged_decomp_rows,
                 "finalSheet": final_sheet,
@@ -715,6 +721,19 @@ async def checklist_execute_status(job_id: str) -> Dict[str, Any]:
 async def checklist_execute_status_delete(job_id: str) -> Dict[str, Any]:
     existed = execute_jobs.pop(job_id, None) is not None
     return {"ok": True, "jobId": job_id, "deleted": existed}
+
+
+@app.post("/api/checklist/execute/graph")
+async def checklist_execute_graph(req: Request) -> Dict[str, Any]:
+    payload = await _json_payload(req)
+    rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
+    chain_statuses = payload.get("chainStatuses") if isinstance(payload.get("chainStatuses"), dict) else {}
+    graph_payload = build_execution_graph(rows, chain_statuses)
+    return {
+        "ok": True,
+        "graph": graph_payload,
+        "executionGraph": graph_payload,
+    }
 
 
 @app.get("/api/qa/templates")
