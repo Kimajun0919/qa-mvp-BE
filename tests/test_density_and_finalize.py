@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from app.services.checklist import generate_checklist
+from app.services.checklist import _detect_feature_families, generate_checklist
 from app.services.final_output import _to_detail_rows
 from app.main import _extract_execute_payload
 
@@ -88,6 +88,49 @@ class DensityAndFinalizeTests(unittest.TestCase):
         actions = "\n".join(str(r.get("action") or "") for r in rows)
         for keyword in ["정렬", "검색", "페이지", "첨부", "댓글"]:
             self.assertIn(keyword, actions)
+
+    def test_feature_family_detection_and_density_for_payment_admin_profile(self):
+        families = _detect_feature_families(
+            "https://example.com/admin/billing",
+            "결제 환불 profile account 알림",
+        )
+        for name in ["payment", "admin", "profile", "notification"]:
+            self.assertIn(name, families)
+
+        out = asyncio.run(
+            generate_checklist(
+                screen="https://example.com/admin/billing",
+                context="결제 환불 profile account 알림",
+                include_auth=True,
+                provider="__no_llm__",
+                max_rows=80,
+            )
+        )
+        rows = out.get("rows") or []
+        corpus = "\n".join(
+            f"{str(r.get('action') or '')} {str(r.get('expected') or '')}" for r in rows
+        )
+        for keyword in ["결제", "환불", "운영", "프로필", "발송"]:
+            self.assertIn(keyword, corpus)
+        self.assertGreaterEqual(len(rows), 18)
+
+    def test_generate_checklist_respects_max_rows_with_dense_families(self):
+        out = asyncio.run(
+            generate_checklist(
+                screen="https://example.com/admin/board/payment",
+                context="로그인 검색 필터 페이지 업로드 결제 환불 운영 프로필 알림",
+                include_auth=True,
+                provider="__no_llm__",
+                max_rows=16,
+            )
+        )
+        rows = out.get("rows") or []
+        self.assertLessEqual(len(rows), 16)
+        first = rows[0]
+        self.assertIn("화면", first)
+        self.assertIn("module", first)
+        self.assertIn("테스트시나리오", first)
+        self.assertIn("action", first)
 
     def test_execute_payload_server_safe_defaults(self):
         cfg = _extract_execute_payload({"rows": [{"화면": "https://example.com", "테스트시나리오": "렌더"}]})

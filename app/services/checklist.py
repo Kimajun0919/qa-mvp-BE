@@ -210,6 +210,102 @@ def _screen_sections(screen: str, context: str = "") -> List[str]:
     return dedup
 
 
+def _detect_feature_families(screen: str, context: str = "") -> List[str]:
+    low = f"{screen} {context}".lower()
+    families: List[str] = []
+    family_keywords = {
+        "auth": ["login", "signin", "signup", "otp", "auth", "로그인", "회원가입", "인증", "비밀번호"],
+        "search": ["search", "filter", "query", "검색", "필터", "정렬"],
+        "pagination": ["page", "pagination", "infinite", "페이지", "더보기", "스크롤"],
+        "crud": ["create", "update", "delete", "edit", "등록", "수정", "삭제", "저장"],
+        "upload": ["upload", "file", "attachment", "image", "첨부", "업로드", "파일"],
+        "payment": ["payment", "pay", "billing", "refund", "checkout", "결제", "환불", "정산"],
+        "admin": ["admin", "cms", "console", "dashboard", "운영", "관리", "권한"],
+        "profile": ["mypage", "profile", "account", "내 정보", "프로필", "계정"],
+        "notification": ["alarm", "notify", "email", "sms", "push", "알림", "메일", "푸시"],
+    }
+
+    for family, keywords in family_keywords.items():
+        if any(k in low for k in keywords):
+            families.append(family)
+
+    if _is_board_domain(screen, context):
+        families.extend(["crud", "search", "pagination", "upload"])  # board dominant capabilities
+
+    # dense fallback coverage for unknown contexts
+    if not families:
+        families = ["crud", "search", "pagination"]
+
+    dedup: List[str] = []
+    seen = set()
+    for f in families:
+        if f in seen:
+            continue
+        seen.add(f)
+        dedup.append(f)
+    return dedup[:6]
+
+
+def _family_rows(screen: str, family: str) -> List[Dict[str, str]]:
+    module = f"{screen}::기능군::{family}"
+    cases = {
+        "auth": [
+            ("권한", "로그인 성공 후 보호 페이지 접근을 확인한다", "세션 발급 후 보호 리소스 접근 가능"),
+            ("예외", "비밀번호 5회 오입력 후 재시도한다", "계정 잠금 또는 추가 인증을 요구"),
+        ],
+        "search": [
+            ("기능", "검색어와 다중 필터를 조합해 조회한다", "조건에 맞는 결과와 총 건수가 일치"),
+            ("경계", "존재하지 않는 키워드로 검색한다", "빈 결과 상태와 안내 문구를 노출"),
+        ],
+        "pagination": [
+            ("경계", "첫/중간/마지막 페이지를 순차 이동한다", "중복/누락 없이 동일 기준으로 노출"),
+            ("회귀", "필터 적용 상태에서 페이지 이동 후 복귀한다", "필터/정렬 상태가 유지"),
+        ],
+        "crud": [
+            ("기능", "신규 데이터 등록 후 목록/상세에서 조회한다", "생성 데이터가 즉시 반영"),
+            ("회귀", "데이터 수정 후 감사 이력/수정일을 확인한다", "최신 값과 변경 이력이 일치"),
+            ("예외", "삭제 후 직접 URL로 재접근한다", "404 또는 접근 불가 처리"),
+        ],
+        "upload": [
+            ("기능", "허용 파일을 업로드하고 미리보기를 확인한다", "업로드 상태와 메타정보가 정확히 표시"),
+            ("예외", "용량 초과 또는 금지 확장자 업로드를 시도한다", "업로드 차단과 오류 안내를 노출"),
+        ],
+        "payment": [
+            ("기능", "결제 승인 후 주문/영수증 상태를 확인한다", "결제 상태와 금액 합계가 일치"),
+            ("예외", "환불 요청 또는 결제 실패 후 재시도를 수행한다", "중복 청구 없이 실패/환불 이력이 기록"),
+        ],
+        "admin": [
+            ("권한", "권한 없는 계정으로 운영 기능 접근을 시도한다", "접근 차단 및 권한 오류를 표시"),
+            ("운영", "상태 변경/발행 후 사용자 노출 상태를 점검한다", "운영 변경이 사용자 화면에 일관되게 반영"),
+        ],
+        "profile": [
+            ("기능", "프로필 정보를 수정하고 재로그인 후 확인한다", "수정 값이 유지되고 화면에 반영"),
+            ("예외", "중복 이메일/전화번호로 저장을 시도한다", "중복 검증 오류를 노출하고 저장 차단"),
+        ],
+        "notification": [
+            ("기능", "이벤트 트리거 후 이메일/푸시 발송 여부를 확인한다", "채널별 발송 상태와 본문 템플릿이 일치"),
+            ("예외", "수신 거부 사용자에게 발송을 시도한다", "발송이 스킵되고 사유가 로그에 기록"),
+        ],
+    }
+
+    rows: List[Dict[str, str]] = []
+    for category, action, expected in cases.get(family, []):
+        rows.append(
+            _normalize_row(
+                {
+                    "화면": module,
+                    "구분": category,
+                    "element": family,
+                    "action": action,
+                    "expected": expected,
+                    "actual": "",
+                },
+                default_screen=module,
+            )
+        )
+    return rows
+
+
 def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
     for section in _screen_sections(screen, context):
@@ -219,6 +315,9 @@ def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) 
             _normalize_row({"화면": module, "구분": "기능", "element": section, "action": f"{section}의 주요 버튼/링크를 클릭한다", "expected": "의도한 화면 또는 상태로 전환", "actual": ""}, default_screen=module),
             _normalize_row({"화면": module, "구분": "예외", "element": section, "action": f"{section}에서 필수값 누락 또는 잘못된 입력으로 제출한다", "expected": "유효성 오류가 노출되고 제출 차단", "actual": ""}, default_screen=module),
         ])
+
+    for family in _detect_feature_families(screen, context):
+        rows.extend(_family_rows(screen, family))
 
     if _is_board_domain(screen, context):
         board_module = f"{screen}::게시판핵심"
@@ -237,7 +336,7 @@ def _heuristic_rows(screen: str, context: str = "", include_auth: bool = False) 
         rows.append(
             _normalize_row({"화면": f"{screen}::접근제어", "구분": "권한", "element": "접근제어", "action": "비로그인/권한없는 사용자로 접근한다", "expected": "접근 차단 또는 로그인 유도", "actual": ""}, default_screen=screen)
         )
-    return rows[:40]
+    return rows[:80]
 
 
 def _rows_to_tsv(rows: List[Dict[str, str]]) -> str:
